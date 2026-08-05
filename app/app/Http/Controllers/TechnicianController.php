@@ -17,7 +17,7 @@ class TechnicianController extends Controller
         $dossier = $request->string('dossier')->trim()->toString();
 
         if ($dossier !== '') {
-            $acts = DB::table('app.vw_erp_actes_bloc as a')
+            $acts = DB::table('app.vw_erp_actes_bloc_direction as a')
                 ->where('a.NumDoss', $dossier)
                 ->select('a.*')
                 ->orderByDesc('a.HDAnest')
