@@ -11,19 +11,25 @@ class DirectionController extends Controller
 {
     public function index(Request $request): View
     {
-        $status = $request->string('statut', 'SOUMIS')->upper()->toString();
-        $declarations = DB::table('app.extra_declarations as d')
-            ->leftJoin('app.vw_erp_actes_bloc as a', 'd.num_intv', '=', 'a.NumIntv')
+        $statuses = collect($request->input('statuts', ['SOUMIS', 'PREVALIDE']))
+            ->filter(fn ($status) => in_array($status, ['SOUMIS', 'PREVALIDE', 'VALIDE', 'REJETE'], true))->all();
+        $dateDebut = $request->input('date_debut', now()->startOfMonth()->toDateString());
+        $dateFin = $request->input('date_fin', now()->toDateString());
+        $query = DB::table('app.extra_declarations as d')
+            ->leftJoin('app.vw_erp_actes_bloc_direction as a', 'd.num_intv', '=', 'a.NumIntv')
             ->leftJoin('app.vw_erp_acte_intervenants as i', function ($join): void {
                 $join->on('d.num_intv', '=', 'i.NumIntv')->on('d.cod_interv', '=', 'i.CodInterv');
             })
-            ->where('d.statut', $status)
-            ->select('d.*', 'a.LibelleActe', 'a.HDAnest', 'a.HFAnest', 'a.Salle', 'i.DesInterv')
-            ->orderBy('d.declared_at')
+            ->when($statuses, fn ($q) => $q->whereIn('d.statut', $statuses))
+            ->whereDate('a.DatOpe', '>=', $dateDebut)
+            ->whereDate('a.DatOpe', '<=', $dateFin)
+            ->select('d.*', 'a.LibelleActe', 'a.DatOpe', 'a.DesignationSalle', 'a.Chirurgien', 'a.Reanimateur', 'a.Debut_Anesthesie', 'a.Fin_Anesthesie', 'i.DesInterv', 'i.DesTypInterv', 'i.Matricule')
+            ->orderByDesc('a.DatOpe');
+        $declarations = $query
             ->paginate(25)
             ->withQueryString();
 
-        return view('direction.index', compact('declarations', 'status'));
+        return view('direction.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin'));
     }
 
     public function decide(Request $request, int $declaration): RedirectResponse
