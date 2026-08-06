@@ -23,7 +23,14 @@ class DirectionController extends Controller
             ->when($statuses, fn ($q) => $q->whereIn('d.statut', $statuses))
             ->whereDate('a.DatOpe', '>=', $dateDebut)
             ->whereDate('a.DatOpe', '<=', $dateFin)
-            ->select('d.*', 'a.LibelleActe', 'a.DatOpe', 'a.DesignationSalle', 'a.Chirurgien', 'a.Reanimateur', 'a.HDAnest', 'a.HFAnest', 'a.Debut_Anesthesie', 'a.Fin_Anesthesie', 'i.DesInterv', 'i.DesTypInterv', 'i.LoginErp', 'i.MatriculePointeuse')
+            ->select(
+                'd.*',
+                'a.LibelleActe', 'a.DatOpe', 'a.DesignationSalle', 'a.Chirurgien', 'a.Reanimateur', 'a.HDAnest', 'a.HFAnest', 'a.Debut_Anesthesie', 'a.Fin_Anesthesie',
+                'a.NomPatient', 'a.PrenomPatient',
+                'i.DesInterv', 'i.DesTypInterv', 'i.LoginErp', 'i.MatriculePointeuse',
+                'i.HeureEmploiDebut1', 'i.HeureEmploiFin1', 'i.HeureEmploiDebut2', 'i.HeureEmploiFin2',
+                'i.HeurePointageEntree', 'i.HeurePointageSortie'
+            )
             ->orderByDesc('a.DatOpe');
         $declarations = $query
             ->paginate(25)

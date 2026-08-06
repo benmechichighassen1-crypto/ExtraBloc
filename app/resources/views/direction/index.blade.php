@@ -5,17 +5,20 @@
         @foreach(['SOUMIS'=>'En attente','PREVALIDE'=>'Prévalidé','VALIDE'=>'Validé','REJETE'=>'Refusé'] as $value => $label)<label><input type="checkbox" name="statuts[]" value="{{ $value }}" @checked(in_array($value, $statuses, true))> {{ $label }}</label>@endforeach
         <button>Filtrer</button><button type="button" onclick="window.print()">Imprimer</button></form>
     </section>
-    <section class="card"><table><thead><tr><th>Intervenant / acte</th><th>Médecins</th><th>Heure planification</th><th>Heure anesthésie</th><th>Saisie</th><th>Statut</th><th>Décision</th></tr></thead><tbody>
+    <section class="card"><table><thead><tr><th>Intervenant / acte</th><th>Patient</th><th>Médecins</th><th>Heure planification</th><th>Heure anesthésie</th><th>Heure emploi</th><th>Heure pointage</th><th>Saisie</th><th>Statut</th><th>Décision</th></tr></thead><tbody>
     @forelse($declarations as $item)<tr>
         <td><strong>{{ $item->DesInterv ?? $item->cod_interv }}</strong><br><span class="muted">{{ $item->DesTypInterv ?? 'Type non renseigné' }}</span><br>{{ $item->LibelleActe }}<br><span class="muted">Dossier {{ $item->num_doss }} · {{ $item->DesignationSalle ?? 'Salle non renseignée' }}</span>@if($item->observation)<br><strong>Observation :</strong> {{ $item->observation }}@endif</td>
+        <td>{{ $item->NomPatient }} {{ $item->PrenomPatient }}</td>
         <td><strong>Chirurgien :</strong> {{ $item->Chirurgien }}<br><strong>Réanimateur :</strong> {{ $item->Reanimateur }}</td>
         <td>{{ $item->HDAnest }}<br>{{ $item->HFAnest }}</td>
         <td>{{ $item->Debut_Anesthesie ?? 'Non renseigné' }}<br>{{ $item->Fin_Anesthesie ?? 'Non renseigné' }}</td>
+        <td>@if($item->HeureEmploiDebut1){{ $item->HeureEmploiDebut1 }} - {{ $item->HeureEmploiFin1 }}@if($item->HeureEmploiDebut2)<br>{{ $item->HeureEmploiDebut2 }} - {{ $item->HeureEmploiFin2 }}@endif@else <span class="muted">Non renseigné</span>@endif</td>
+        <td>@if($item->HeurePointageEntree){{ $item->HeurePointageEntree }}<br>{{ $item->HeurePointageSortie }}@else <span class="muted">Aucun pointage</span>@endif</td>
         <td>{{ $item->declared_by_username }}<br><span class="muted">{{ $item->declared_at }}</span></td>
         <td><span class="badge status-{{ strtolower($item->statut) }}">{{ $item->statut }}</span></td>
         <td>@if(in_array($item->statut, ['SOUMIS','PREVALIDE']))<form method="post" action="{{ route('direction.declarations.decide', $item->id) }}" class="row">@csrf @method('PATCH')
             <input name="motif" placeholder="Motif (facultatif)"><button class="success" name="decision" value="VALIDE">Valider</button><button class="danger" name="decision" value="REJETE">Rejeter</button>
         </form>@else <strong>{{ $item->valide_par_username }}</strong><br><span class="muted">{{ $item->valide_le }}</span>@endif</td>
-    </tr>@empty <tr><td colspan="7">Aucune déclaration.</td></tr>@endforelse
+    </tr>@empty <tr><td colspan="10">Aucune déclaration.</td></tr>@endforelse
     </tbody></table><div style="margin-top:16px">{{ $declarations->links() }}</div></section>
 </x-layouts.app>

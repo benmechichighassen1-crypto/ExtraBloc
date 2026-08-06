@@ -8,9 +8,11 @@
         <section class="card">
             <h2>Actes du dossier {{ $dossier }}</h2>
             @if($acts->isEmpty()) <p>Aucun acte bloc attribué à cet intervenant.</p>
-            @else <table><thead><tr><th>Acte</th><th>Salle</th><th>Heure planification</th><th>Heure anesthésie</th><th>Intervenants de l’acte</th><th>Action</th></tr></thead><tbody>
+            @else <table><thead><tr><th>Acte</th><th>Patient</th><th>Médecin chirurgien</th><th>Salle</th><th>Heure planification</th><th>Heure anesthésie</th><th>Intervenants de l’acte</th><th>Action</th></tr></thead><tbody>
             @foreach($acts as $act)<tr>
                 <td><strong>{{ $act->LibelleActe }}</strong><br><span class="muted">{{ $act->TypeActe }} · {{ $act->CodeActe }}</span></td>
+                <td>{{ $act->NomPatient }} {{ $act->PrenomPatient }}</td>
+                <td>{{ $act->Chirurgien ?? 'Non renseigné' }}</td>
                 <td>{{ $act->DesignationSalle ?? $act->Salle }}</td><td>{{ $act->HDAnest }}<br>{{ $act->HFAnest }}</td><td>{{ $act->Debut_Anesthesie ?? 'Non renseigné' }}<br>{{ $act->Fin_Anesthesie ?? '' }}</td><td>
                     <form method="post" action="{{ route('technician.declarations.store') }}">@csrf
                     <input type="hidden" name="num_intv" value="{{ $act->NumIntv }}"><input type="hidden" name="num_doss" value="{{ $act->NumDoss }}">
