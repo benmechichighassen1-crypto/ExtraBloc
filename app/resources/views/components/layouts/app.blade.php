@@ -31,7 +31,7 @@
 @endauth
 </nav></header>
 <main>
-    @if(session('success')) <div class="notice">{{ session('success') }}</div> @end if
+    @if(session('success')) <div class="notice">{{ session('success') }}</div> @endif
     {{ $slot }}
 </main>
 </body>
