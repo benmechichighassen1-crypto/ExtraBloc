@@ -17,5 +17,6 @@ Route::middleware('auth')->group(function (): void {
     Route::middleware('direction')->group(function (): void {
         Route::get('/direction', [DirectionController::class, 'index'])->name('direction.index');
         Route::patch('/direction/declarations/{declaration}', [DirectionController::class, 'decide'])->name('direction.declarations.decide');
+        Route::get('/direction/pointages/{matricule}/{date}', [DirectionController::class, 'pointageDetail'])->name('direction.pointages.detail');
     });
 });

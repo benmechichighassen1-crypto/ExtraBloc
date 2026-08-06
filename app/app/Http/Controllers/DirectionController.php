@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use Carbon\Carbon;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -67,5 +69,25 @@ class DirectionController extends Controller
         });
 
         return back()->with('success', 'Décision enregistrée et journalisée.');
+    }
+
+    /**
+     * Détail brut des pointages d'un matricule pour une journée donnée.
+     * Utilisé par l'icône "i" à côté de la colonne Heure pointage.
+     */
+    public function pointageDetail(string $matricule, string $date): JsonResponse
+    {
+        $rows = DB::table('app.vw_erp_pointages')
+            ->whereRaw('LTRIM(RTRIM(Matricule)) = ?', [trim($matricule)])
+            ->whereDate('PointeLe', $date)
+            ->orderBy('PointeLe')
+            ->get(['PointeLe', 'NomComplet']);
+
+        return response()->json(
+            $rows->map(fn ($row) => [
+                'heure' => Carbon::parse($row->PointeLe)->format('H:i:s'),
+                'nom' => $row->NomComplet,
+            ])->values()
+        );
     }
 }

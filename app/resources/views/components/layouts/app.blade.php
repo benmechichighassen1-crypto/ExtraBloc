@@ -16,11 +16,14 @@
         .error { color:#a32424; margin:8px 0 } table { width:100%; border-collapse:collapse; font-size:14px } th,td { text-align:left; padding:11px 8px; border-bottom:1px solid #e6edf2; vertical-align:top } th { color:#567; }
         .badge { border-radius:20px; padding:4px 9px; background:#e3edf4; font-size:12px; white-space:nowrap } .status-soumis { background:#fff0c7; color:#805900 }.status-prevalide { background:#d9efff; color:#075a92 }.status-valide { background:#dff5e7; color:#12643e }.status-rejete { background:#fee1e1; color:#9d2424 } .muted { color:#6a7a86 }
         @media print { header, form, button { display:none!important } main { max-width:none; padding:0 } .card { box-shadow:none; padding:0 } }
+        .brand { display:flex; flex-direction:column; line-height:1.2; margin-right:22px }
+        .brand .brand-eyebrow { font-size:11px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:#9fc2de }
+        .brand .brand-name { font-size:15px; font-weight:700; color:#fff }
     </style>
 </head>
-<body>
+<body@if(request()->routeIs('login')) style="background-image:url('{{ asset('images/arrierplan.jpeg') }}');background-size:cover;background-position:center;background-attachment:fixed;min-height:100vh"@endif>
 <header><strong>Extra Bloc</strong><nav>
-    <img src="{{ asset('images/ibnsina-logo.jpeg') }}" alt="Ibn Sina Tanger" style="height:42px;vertical-align:middle;background:#fff;border-radius:4px;margin-right:18px">
+    <span class="brand"><span class="brand-eyebrow">Clinique</span><span class="brand-name">Clinique Internationale Ibn Sina Tanger</span></span>
 @auth
     <a href="{{ route('technician.index') }}">Saisie intervenant</a>
     <a href="{{ route('direction.index') }}">Direction</a>
