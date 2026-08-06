@@ -21,7 +21,7 @@
         .brand .brand-name { font-size:15px; font-weight:700; color:#fff }
     </style>
 </head>
-<body@if(request()->routeIs('login')) style="background-image:url('{{ asset('images/arrierplan.jpeg') }}');background-size:cover;background-position:center;background-attachment:fixed;min-height:100vh"@endif>
+<body@if(request()->routeIs('login')) style="background-image:url('{{ asset('images/arrierplan.jpeg') }}');background-size:cover;background-position:center;background-attachment:fixed;min-height:100vh"@en dif>
 <header><strong>Extra Bloc</strong><nav>
     <span class="brand"><span class="brand-eyebrow">Clinique</span><span class="brand-name">Clinique Internationale Ibn Sina Tanger</span></span>
 @auth
@@ -31,7 +31,7 @@
 @endauth
 </nav></header>
 <main>
-    @if(session('success')) <div class="notice">{{ session('success') }}</div> @endif
+    @if(session('success')) <div class="notice">{{ session('success') }}</div> @end if
     {{ $slot }}
 </main>
 </body>
