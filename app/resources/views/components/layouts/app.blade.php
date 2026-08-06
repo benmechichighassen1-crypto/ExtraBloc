@@ -19,13 +19,14 @@
     </style>
 </head>
 <body>
-@auth
 <header><strong>Extra Bloc</strong><nav>
+    <img src="{{ asset('images/ibnsina-logo.jpeg') }}" alt="Ibn Sina Tanger" style="height:42px;vertical-align:middle;background:#fff;border-radius:4px;margin-right:18px">
+@auth
     <a href="{{ route('technician.index') }}">Saisie intervenant</a>
     <a href="{{ route('direction.index') }}">Direction</a>
     <form method="post" action="{{ route('logout') }}" style="display:inline">@csrf <button>Déconnexion</button></form>
-</nav></header>
 @endauth
+</nav></header>
 <main>
     @if(session('success')) <div class="notice">{{ session('success') }}</div> @endif
     {{ $slot }}

@@ -20,7 +20,7 @@ Laravel ── SQL login limité ──> extra_bloc (saisies, décisions, audit)
 5. La déclaration est prévalidée automatiquement lorsque les règles de présence sont satisfaites.
 6. La direction valide ou rejette, avec motif et journal d'audit immuable.
 
-L'accès Direction est attribué localement dans `app.direction_users`, sans changer l'ERP. L'observation facultative saisie avec une déclaration est conservée et consultable par la Direction. La table `app.user_intervenant_mappings` sert au rapprochement technique `CodInterv → Matricule pointeuse`, et non à l'autorisation de saisie.
+L'accès Direction est attribué localement dans `app.direction_users`, sans changer l'ERP. L'observation facultative saisie avec une déclaration est conservée et consultable par la Direction. Le rapprochement pointeuse est natif : `intervenants.UserName` → `Access Control.UserName` → `Access Control.Matricule`.
 
 ## Règles de sécurité
 

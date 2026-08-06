@@ -1,5 +1,5 @@
 <x-layouts.app>
-    <section class="card" style="max-width:430px;margin:12vh auto">
+    <section class="card" style="max-width:430px;margin:12vh auto;background:rgba(255,255,255,.94)">
         <h1>Extra Bloc</h1>
         <p class="muted">Connectez-vous avec votre compte ERP clinique.</p>
         <form method="post" action="{{ route('login.store') }}">
