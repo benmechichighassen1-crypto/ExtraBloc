@@ -21,7 +21,12 @@
         .brand .brand-name { font-size:15px; font-weight:700; color:#fff }
     </style>
 </head>
-<body@if(request()->routeIs('login')) style="background-image:url('{{ asset('images/arrierplan.jpeg') }}');background-size:cover;background-position:center;background-attachment:fixed;min-height:100vh"@en dif>
+@php
+    $loginBackgroundStyle = request()->routeIs('login')
+        ? "background-image:url('".asset('images/arrierplan.jpeg')."');background-size:cover;background-position:center;background-attachment:fixed;min-height:100vh"
+        : '';
+@endphp
+<body style="{{ $loginBackgroundStyle }}">
 <header><strong>Extra Bloc</strong><nav>
     <span class="brand"><span class="brand-eyebrow">Clinique</span><span class="brand-name">Clinique Internationale Ibn Sina Tanger</span></span>
 @auth
