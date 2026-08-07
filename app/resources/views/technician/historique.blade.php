@@ -1,5 +1,6 @@
 @php
     $statusLabels = ['SOUMIS' => 'En attente', 'PREVALIDE' => 'Prévalidé', 'VALIDE' => 'Validé', 'REJETE' => 'Refusé'];
+    $filterableStatuses = ['SOUMIS' => 'En attente', 'VALIDE' => 'Validé', 'REJETE' => 'Refusé'];
 @endphp
 <x-layouts.app>
     <section class="card">
@@ -11,7 +12,7 @@
             <form method="get" class="row">
                 <label>Du <input type="date" name="date_debut" value="{{ $dateDebut }}"></label>
                 <label>Au <input type="date" name="date_fin" value="{{ $dateFin }}"></label>
-                @foreach($statusLabels as $value => $label)<label><input type="checkbox" name="statuts[]" value="{{ $value }}" @checked(in_array($value, $statuses, true))> {{ $label }}</label>@endforeach
+                @foreach($filterableStatuses as $value => $label)<label><input type="checkbox" name="statuts[]" value="{{ $value }}" @checked(in_array($value, $statuses, true))> {{ $label }}</label>@endforeach
                 <button>Filtrer</button>
             </form>
         @endif

@@ -28,11 +28,12 @@
 @endphp
 <body style="{{ $loginBackgroundStyle }}">
 <header><strong>Extra Bloc</strong><nav>
-    <span class="brand"><span class="brand-eyebrow">Clinique</span><span class="brand-name">Clinique Internationale Ibn Sina Tanger</span></span>
+    <span class="brand"><span class="brand-name">Clinique Internationale Ibn Sina Tanger</span></span>
 @auth
     <a href="{{ route('technician.index') }}">Saisie intervenant</a>
     <a href="{{ route('technician.history') }}">Historique</a>
     <a href="{{ route('direction.index') }}">Direction</a>
+    <span class="muted" style="color:#cfe0ee;margin-right:14px">{{ auth()->user()->getAuthIdentifier() }}</span>
     <form method="post" action="{{ route('logout') }}" style="display:inline">@csrf <button>Déconnexion</button></form>
 @endauth
 </nav></header>
