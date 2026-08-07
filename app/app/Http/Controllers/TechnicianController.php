@@ -37,6 +37,47 @@ class TechnicianController extends Controller
         return view('technician.index', compact('dossier', 'acts', 'participants', 'declarations'));
     }
 
+    /**
+     * Historique personnel : chaque intervenant connecté ne voit que ses
+     * propres déclarations (rapprochées via son UserName -> CodInterv dans
+     * app.vw_erp_intervenants), filtrables par date et par statut.
+     */
+    public function history(Request $request): View
+    {
+        $username = (string) $request->user()->getAuthIdentifier();
+
+        $interv = DB::table('app.vw_erp_intervenants')
+            ->whereRaw('LTRIM(RTRIM(UserName)) = ?', [trim($username)])
+            ->first();
+
+        $statusLabels = ['SOUMIS' => 'En attente', 'PREVALIDE' => 'Prévalidé', 'VALIDE' => 'Validé', 'REJETE' => 'Refusé'];
+        $statuses = collect($request->input('statuts', ['SOUMIS', 'VALIDE', 'REJETE']))
+            ->filter(fn ($status) => array_key_exists($status, $statusLabels))->all();
+        $dateDebut = $request->input('date_debut', now()->startOfMonth()->toDateString());
+        $dateFin = $request->input('date_fin', now()->toDateString());
+
+        $declarations = collect();
+
+        if ($interv) {
+            $declarations = DB::table('app.extra_declarations as d')
+                ->leftJoin('app.vw_erp_actes_bloc_direction as a', 'd.num_intv', '=', 'a.NumIntv')
+                ->where('d.cod_interv', $interv->CodInterv)
+                ->when($statuses, fn ($q) => $q->whereIn('d.statut', $statuses))
+                ->whereDate('a.DatOpe', '>=', $dateDebut)
+                ->whereDate('a.DatOpe', '<=', $dateFin)
+                ->select(
+                    'd.*',
+                    'a.LibelleActe', 'a.DatOpe', 'a.DesignationSalle',
+                    'a.NomPatient', 'a.PrenomPatient'
+                )
+                ->orderByDesc('a.DatOpe')
+                ->paginate(25)
+                ->withQueryString();
+        }
+
+        return view('technician.historique', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'interv'));
+    }
+
     public function store(Request $request): RedirectResponse
     {
         $data = $request->validate([

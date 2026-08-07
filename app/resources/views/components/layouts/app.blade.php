@@ -31,6 +31,7 @@
     <span class="brand"><span class="brand-eyebrow">Clinique</span><span class="brand-name">Clinique Internationale Ibn Sina Tanger</span></span>
 @auth
     <a href="{{ route('technician.index') }}">Saisie intervenant</a>
+    <a href="{{ route('technician.history') }}">Historique</a>
     <a href="{{ route('direction.index') }}">Direction</a>
     <form method="post" action="{{ route('logout') }}" style="display:inline">@csrf <button>Déconnexion</button></form>
 @endauth

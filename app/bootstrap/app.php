@@ -14,6 +14,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'direction' => \App\Http\Middleware\EnsureDirectionAccess::class,
         ]);
+        $middleware->web(append: [
+            \App\Http\Middleware\EnsureSessionIsActive::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

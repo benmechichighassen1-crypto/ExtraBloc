@@ -14,6 +14,7 @@ Route::middleware('auth')->group(function (): void {
     Route::post('/deconnexion', [AuthController::class, 'destroy'])->name('logout');
     Route::get('/technicien', [TechnicianController::class, 'index'])->name('technician.index');
     Route::post('/technicien/declarations', [TechnicianController::class, 'store'])->name('technician.declarations.store');
+    Route::get('/historique', [TechnicianController::class, 'history'])->name('technician.history');
     Route::middleware('direction')->group(function (): void {
         Route::get('/direction', [DirectionController::class, 'index'])->name('direction.index');
         Route::get('/direction/export', [DirectionController::class, 'exportExcel'])->name('direction.export');
