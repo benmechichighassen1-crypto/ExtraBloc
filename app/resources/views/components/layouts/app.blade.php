@@ -32,7 +32,12 @@
 @auth
     <a href="{{ route('technician.index') }}">Saisie intervenant</a>
     <a href="{{ route('technician.history') }}">Historique</a>
-    <a href="{{ route('direction.index') }}">Direction</a>
+    @if(\App\Support\AccessControl::hasMajorAccess(auth()->user()->getAuthIdentifier()))
+        <a href="{{ route('major.index') }}">Pré-validation</a>
+    @endif
+    @if(\App\Support\AccessControl::hasDirectionAccess(auth()->user()->getAuthIdentifier()))
+        <a href="{{ route('direction.index') }}">Direction</a>
+    @endif
     <span class="muted" style="color:#cfe0ee;margin-right:14px">{{ auth()->user()->getAuthIdentifier() }}</span>
     <form method="post" action="{{ route('logout') }}" style="display:inline">@csrf <button>Déconnexion</button></form>
 @endauth

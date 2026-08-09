@@ -13,6 +13,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'direction' => \App\Http\Middleware\EnsureDirectionAccess::class,
+            'major' => \App\Http\Middleware\EnsureMajorAccess::class,
         ]);
         $middleware->web(append: [
             \App\Http\Middleware\EnsureSessionIsActive::class,

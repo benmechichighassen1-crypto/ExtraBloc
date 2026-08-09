@@ -39,29 +39,34 @@ class TechnicianController extends Controller
 
     /**
      * Historique personnel : chaque intervenant connecté ne voit que ses
-     * propres déclarations (rapprochées via son UserName -> CodInterv dans
-     * app.vw_erp_intervenants), filtrables par date et par statut.
+     * propres déclarations, filtrables par date et par statut.
+     *
+     * Un même utilisateur ERP peut être rattaché à PLUSIEURS CodInterv
+     * (ex: panseur ET instrumentiste) : on récupère donc tous les
+     * CodInterv liés à son UserName, pas seulement le premier, pour que
+     * l'historique remonte bien les dossiers de tous ses rôles.
      */
     public function history(Request $request): View
     {
         $username = (string) $request->user()->getAuthIdentifier();
 
-        $interv = DB::table('app.vw_erp_intervenants')
+        $intervs = DB::table('app.vw_erp_intervenants')
             ->whereRaw('LTRIM(RTRIM(UserName)) = ?', [trim($username)])
-            ->first();
+            ->get();
+        $codInterv = $intervs->pluck('CodInterv')->all();
 
         $statusLabels = ['SOUMIS' => 'En attente', 'PREVALIDE' => 'Prévalidé', 'VALIDE' => 'Validé', 'REJETE' => 'Refusé'];
-        $statuses = collect($request->input('statuts', ['SOUMIS', 'VALIDE', 'REJETE']))
+        $statuses = collect($request->input('statuts', ['SOUMIS', 'PREVALIDE', 'VALIDE', 'REJETE']))
             ->filter(fn ($status) => array_key_exists($status, $statusLabels))->all();
         $dateDebut = $request->input('date_debut', now()->startOfMonth()->toDateString());
         $dateFin = $request->input('date_fin', now()->toDateString());
 
         $declarations = collect();
 
-        if ($interv) {
+        if ($codInterv !== []) {
             $declarations = DB::table('app.extra_declarations as d')
                 ->leftJoin('app.vw_erp_actes_bloc_direction as a', 'd.num_intv', '=', 'a.NumIntv')
-                ->where('d.cod_interv', $interv->CodInterv)
+                ->whereIn('d.cod_interv', $codInterv)
                 ->when($statuses, fn ($q) => $q->whereIn('d.statut', $statuses))
                 ->whereDate('a.DatOpe', '>=', $dateDebut)
                 ->whereDate('a.DatOpe', '<=', $dateFin)
@@ -75,7 +80,7 @@ class TechnicianController extends Controller
                 ->withQueryString();
         }
 
-        return view('technician.historique', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'interv'));
+        return view('technician.historique', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'intervs'));
     }
 
     public function store(Request $request): RedirectResponse

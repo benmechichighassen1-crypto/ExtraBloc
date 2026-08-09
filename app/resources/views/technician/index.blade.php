@@ -24,7 +24,7 @@
                     <input type="hidden" name="num_intv" value="{{ $act->NumIntv }}"><input type="hidden" name="num_doss" value="{{ $act->NumDoss }}">
                     @forelse($participants->get($act->NumIntv, collect()) as $participant)
                         @php($already = $declarations->get($act->NumIntv, collect())->get($participant->CodInterv))
-                        <label style="display:block;margin-bottom:5px"><input type="checkbox" name="cod_interv[]" value="{{ $participant->CodInterv }}" @disabled($already)> {{ $participant->DesInterv }} <span class="muted">({{ $participant->DesTypInterv ?? $participant->TypInterv }})</span> @if($already)<span class="badge">{{ $statusLabels[$already->statut] ?? $already->statut }}</span>@endif</label>
+                        <label style="display:block;margin-bottom:5px"><input type="checkbox" name="cod_interv[]" value="{{ $participant->CodInterv }}" @disabled($already)> {{ $participant->DesInterv }} — <strong>{{ \App\Support\Format::role($participant->RoleIntervenant) }}</strong> <span class="muted">(fiche : {{ $participant->DesTypInterv ?? $participant->TypInterv }})</span> @if($already)<span class="badge">{{ $statusLabels[$already->statut] ?? $already->statut }}</span>@endif</label>
                     @empty <span class="muted">Aucun intervenant lié dans l’ERP.</span>@endforelse
                     <label style="display:block;margin-top:8px">Observation facultative<br><textarea name="observation" rows="2" maxlength="1000" style="width:100%" placeholder="Précision utile pour la Direction"></textarea></label>
                 </td><td><button class="success">Enregistrer</button></form></td>

@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Auth\ErpUserProvider;
+use Illuminate\Pagination\Paginator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\ServiceProvider;
 
@@ -22,5 +23,8 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Auth::provider('erp', fn () => new ErpUserProvider());
+
+        // Vue de pagination en français (numéros de page), utilisée par tous les ->links().
+        Paginator::defaultView('pagination.custom');
     }
 }

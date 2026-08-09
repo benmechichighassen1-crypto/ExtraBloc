@@ -2,9 +2,9 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\AccessControl;
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 class EnsureDirectionAccess
@@ -12,12 +12,8 @@ class EnsureDirectionAccess
     public function handle(Request $request, Closure $next): Response
     {
         $user = $request->user();
-        $hasAccess = $user && DB::table('app.direction_users')
-            ->where('erp_username', $user->getAuthIdentifier())
-            ->where('actif', 1)
-            ->exists();
 
-        if (! $hasAccess) {
+        if (! AccessControl::hasDirectionAccess($user?->getAuthIdentifier())) {
             abort(403, 'Accès réservé à la direction.');
         }
 

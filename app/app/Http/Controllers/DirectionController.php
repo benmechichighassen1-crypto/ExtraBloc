@@ -18,6 +18,7 @@ class DirectionController extends Controller
     /** Libellés lisibles des actions journalisées dans app.extra_declaration_audits. */
     private const ACTION_LABELS = [
         'SOUMIS' => 'Création (saisie intervenant)',
+        'PREVALIDE' => 'Pré-validation (major du bloc)',
         'VALIDE' => 'Validation',
         'REJETE' => 'Rejet',
         'DEVALIDE' => 'Dévalidation (correction)',
@@ -36,12 +37,33 @@ class DirectionController extends Controller
         $statuses = $this->resolveStatuses($request);
         $dateDebut = $request->input('date_debut', now()->startOfMonth()->toDateString());
         $dateFin = $request->input('date_fin', now()->toDateString());
+        $intervenant = trim((string) $request->input('intervenant', ''));
+        $recherche = trim((string) $request->input('recherche', ''));
 
-        $declarations = $this->buildQuery($statuses, $dateDebut, $dateFin)
+        $declarations = $this->buildQuery($statuses, $dateDebut, $dateFin, $intervenant, $recherche)
             ->paginate(25)
             ->withQueryString();
 
-        return view('direction.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin'));
+        $intervenantOptions = $this->intervenantOptions();
+        $prevalidationObligatoire = (bool) config('etrasbloc.prevalidation_obligatoire');
+
+        return view('direction.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'intervenant', 'recherche', 'intervenantOptions', 'prevalidationObligatoire'));
+    }
+
+    /**
+     * Liste des intervenants ayant au moins une déclaration, pour le
+     * filtre "Intervenant" (recherche dans une liste) de l'écran Direction.
+     */
+    private function intervenantOptions(): \Illuminate\Support\Collection
+    {
+        return DB::table('app.vw_erp_intervenants as e')
+            ->whereIn('e.CodInterv', function ($q): void {
+                $q->select('cod_interv')->from('app.extra_declarations')->distinct();
+            })
+            ->orderBy('e.DesInterv')
+            ->get(['e.CodInterv', 'e.DesInterv'])
+            ->unique('CodInterv')
+            ->values();
     }
 
     /**
@@ -53,8 +75,10 @@ class DirectionController extends Controller
         $statuses = $this->resolveStatuses($request);
         $dateDebut = $request->input('date_debut', now()->startOfMonth()->toDateString());
         $dateFin = $request->input('date_fin', now()->toDateString());
+        $intervenant = trim((string) $request->input('intervenant', ''));
+        $recherche = trim((string) $request->input('recherche', ''));
 
-        $rows = $this->buildQuery($statuses, $dateDebut, $dateFin)->get();
+        $rows = $this->buildQuery($statuses, $dateDebut, $dateFin, $intervenant, $recherche)->get();
 
         $filename = 'controle_direction_' . $dateDebut . '_au_' . $dateFin . '.xlsx';
 
@@ -63,11 +87,11 @@ class DirectionController extends Controller
 
     private function resolveStatuses(Request $request): array
     {
-        return collect($request->input('statuts', ['SOUMIS', 'VALIDE', 'REJETE']))
+        return collect($request->input('statuts', ['SOUMIS', 'PREVALIDE', 'VALIDE', 'REJETE']))
             ->filter(fn ($status) => in_array($status, ['SOUMIS', 'PREVALIDE', 'VALIDE', 'REJETE'], true))->all();
     }
 
-    private function buildQuery(array $statuses, string $dateDebut, string $dateFin)
+    private function buildQuery(array $statuses, string $dateDebut, string $dateFin, string $intervenant = '', string $recherche = ''): \Illuminate\Database\Query\Builder
     {
         return DB::table('app.extra_declarations as d')
             ->leftJoin('app.vw_erp_actes_bloc_direction as a', 'd.num_intv', '=', 'a.NumIntv')
@@ -77,6 +101,25 @@ class DirectionController extends Controller
             ->when($statuses, fn ($q) => $q->whereIn('d.statut', $statuses))
             ->whereDate('a.DatOpe', '>=', $dateDebut)
             ->whereDate('a.DatOpe', '<=', $dateFin)
+            ->when($intervenant !== '', function ($q) use ($intervenant): void {
+                // Le champ "Intervenant" est rempli via une liste avec recherche
+                // (datalist) au format "CodInterv — Nom" ; si l'utilisateur a
+                // choisi une entrée de la liste, on filtre par code exact.
+                // Sinon (texte libre non reconnu), on retombe sur une
+                // recherche par nom, pour rester tolérant.
+                if (preg_match('/^(\d+)/', $intervenant, $m)) {
+                    $q->where('d.cod_interv', (int) $m[1]);
+                } else {
+                    $q->where('i.DesInterv', 'like', '%'.$intervenant.'%');
+                }
+            })
+            ->when($recherche !== '', function ($q) use ($recherche): void {
+                $q->where(function ($sub) use ($recherche): void {
+                    $sub->where('d.num_doss', 'like', '%'.$recherche.'%')
+                        ->orWhere('a.NomPatient', 'like', '%'.$recherche.'%')
+                        ->orWhere('a.PrenomPatient', 'like', '%'.$recherche.'%');
+                });
+            })
             ->select(
                 'd.*',
                 'a.LibelleActe', 'a.DatOpe', 'a.DesignationSalle', 'a.Chirurgien', 'a.Reanimateur', 'a.HDAnest', 'a.HFAnest', 'a.Debut_Anesthesie', 'a.Fin_Anesthesie',
@@ -99,6 +142,10 @@ class DirectionController extends Controller
             $item = DB::table('app.extra_declarations')->where('id', $declaration)->lockForUpdate()->first();
             abort_unless($item, 404);
             abort_if(! in_array($item->statut, ['SOUMIS', 'PREVALIDE'], true), 422, 'Cette déclaration est déjà traitée.');
+
+            if ($data['decision'] === 'VALIDE' && config('etrasbloc.prevalidation_obligatoire') && $item->statut !== 'PREVALIDE') {
+                abort(422, 'La pré-validation par le major du bloc est obligatoire avant la validation finale.');
+            }
 
             DB::table('app.extra_declarations')->where('id', $declaration)->update([
                 'statut' => $data['decision'],

@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\DirectionController;
+use App\Http\Controllers\MajorController;
 use App\Http\Controllers\TechnicianController;
 
 Route::redirect('/', '/technicien');
@@ -15,6 +16,11 @@ Route::middleware('auth')->group(function (): void {
     Route::get('/technicien', [TechnicianController::class, 'index'])->name('technician.index');
     Route::post('/technicien/declarations', [TechnicianController::class, 'store'])->name('technician.declarations.store');
     Route::get('/historique', [TechnicianController::class, 'history'])->name('technician.history');
+    Route::middleware('major')->group(function (): void {
+        Route::get('/prevalidation', [MajorController::class, 'index'])->name('major.index');
+        Route::patch('/prevalidation/declarations/{declaration}', [MajorController::class, 'decide'])->name('major.declarations.decide');
+        Route::get('/prevalidation/pointages/{matricule}/{date}', [DirectionController::class, 'pointageDetail'])->name('major.pointages.detail');
+    });
     Route::middleware('direction')->group(function (): void {
         Route::get('/direction', [DirectionController::class, 'index'])->name('direction.index');
         Route::get('/direction/export', [DirectionController::class, 'exportExcel'])->name('direction.export');
