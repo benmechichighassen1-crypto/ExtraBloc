@@ -21,6 +21,6 @@ return [
     |
     */
 
-    'prevalidation_obligatoire' => env('PREVALIDATION_OBLIGATOIRE', true),
+    'prevalidation_obligatoire' => env('PREVALIDATION_OBLIGATOIRE', false),
 
 ];
