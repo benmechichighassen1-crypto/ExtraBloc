@@ -35,7 +35,7 @@
     @if(\App\Support\AccessControl::hasMajorAccess(auth()->user()->getAuthIdentifier()))
         <a href="{{ route('major.index') }}">Pré-validation</a>
     @endif
-    @if(\App\Support\AccessControl::hasDirectionAccess(auth()->user()->getAuthIdentifier()))
+    @if(\App\Support\AccessControl::hasDirectionAccess(auth()->user()->getAuthIdentifier()) || \App\Support\AccessControl::hasRhAccess(auth()->user()->getAuthIdentifier()))
         <a href="{{ route('direction.index') }}">Direction</a>
     @endif
     <span class="muted" style="color:#cfe0ee;margin-right:14px">{{ auth()->user()->getAuthIdentifier() }}</span>

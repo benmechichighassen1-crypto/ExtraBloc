@@ -4,9 +4,14 @@
 @endphp
 <x-layouts.app>
     <section class="card">
-        <h1>Contrôle direction</h1>
+        <h1>{{ $canValidate ? 'Contrôle direction' : 'Déclarations validées (RH)' }}</h1>
+        @if(!$canValidate)
+            <p class="muted">Consultation en lecture seule des actes extra validés par la Direction, pour traitement de la paie.</p>
+        @endif
         <form method="get" class="row"><label>Du <input type="date" name="date_debut" value="{{ $dateDebut }}"></label><label>Au <input type="date" name="date_fin" value="{{ $dateFin }}"></label>
-        @foreach($filterableStatuses as $value => $label)<label><input type="checkbox" name="statuts[]" value="{{ $value }}" @checked(in_array($value, $statuses, true))> {{ $label }}</label>@endforeach
+        @if($canValidate)
+            @foreach($filterableStatuses as $value => $label)<label><input type="checkbox" name="statuts[]" value="{{ $value }}" @checked(in_array($value, $statuses, true))> {{ $label }}</label>@endforeach
+        @endif
         <label>Intervenant
             <span style="position:relative;display:inline-block">
                 <input list="intervenant-options" id="intervenant-input" name="intervenant" value="{{ $intervenant }}" placeholder="Rechercher un intervenant…" autocomplete="off" style="min-width:220px;padding-right:28px">
@@ -52,7 +57,9 @@
             {{ \App\Support\Format::dateTime($item->Fin_Anesthesie) ?? '' }}
         </td>
         <td>
-            @if($item->HeureEmploiDebut1)
+            @if($item->Repos)
+                <span class="badge" style="background:#e3edf4;color:#3a4a56">En repos</span>
+            @elseif($item->HeureEmploiDebut1)
                 {{ \App\Support\Format::time($item->HeureEmploiDebut1) }} - {{ \App\Support\Format::time($item->HeureEmploiFin1) }}
                 @if($item->HeureEmploiDebut2)
                     <br>{{ \App\Support\Format::time($item->HeureEmploiDebut2) }} - {{ \App\Support\Format::time($item->HeureEmploiFin2) }}
@@ -76,7 +83,7 @@
         <td>{{ $item->declared_by_username }}<br><span class="muted">{{ \App\Support\Format::dateTime($item->declared_at) }}</span></td>
         <td><span class="badge status-{{ strtolower($item->statut) }}">{{ $statusLabels[$item->statut] ?? $item->statut }}</span></td>
         <td>
-            @if(in_array($item->statut, ['SOUMIS','PREVALIDE']))
+            @if($canValidate && in_array($item->statut, ['SOUMIS','PREVALIDE']))
                 @if($item->statut === 'PREVALIDE')
                     <div class="muted" style="margin-bottom:6px">Prévalidé par <strong>{{ $item->prevalide_par_username }}</strong> le {{ \App\Support\Format::dateTime($item->prevalide_le) }}
                     @if($item->motif_prevalidation)<br>Motif : {{ $item->motif_prevalidation }}@endif
@@ -92,7 +99,7 @@
                     <button class="danger" name="decision" value="REJETE">Rejeter</button>
                     <button type="button" class="btn-outline" onclick="openAuditModal({{ $item->id }})">Traçabilité</button>
                 </form>
-            @else
+            @elseif($canValidate)
                 <div><strong>{{ $item->valide_par_username }}</strong><br>
                 <span class="muted">{{ \App\Support\Format::dateTime($item->valide_le) }}</span>
                 @if($item->motif_decision)<br><span class="muted">Motif : {{ $item->motif_decision }}</span>@endif</div>
@@ -102,6 +109,12 @@
                     <button type="submit" style="background:#c67c1f">Dévalider</button>
                     <button type="button" class="btn-outline" onclick="openAuditModal({{ $item->id }})">Traçabilité</button>
                 </form>
+            @else
+                {{-- RH : lecture seule, aucune action possible --}}
+                <div><strong>{{ $item->valide_par_username }}</strong><br>
+                <span class="muted">{{ \App\Support\Format::dateTime($item->valide_le) }}</span>
+                @if($item->motif_decision)<br><span class="muted">Motif : {{ $item->motif_decision }}</span>@endif</div>
+                <button type="button" class="btn-outline" style="margin-top:8px" onclick="openAuditModal({{ $item->id }})">Traçabilité</button>
             @endif
         </td>
     </tr>@empty <tr><td colspan="10">Aucune déclaration.</td></tr>@endforelse

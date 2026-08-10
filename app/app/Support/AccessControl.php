@@ -34,4 +34,17 @@ class AccessControl
         return DB::table('app.major_users')->where('erp_username', $username)->where('actif', 1)->exists()
             || self::hasDirectionAccess($username);
     }
+
+    /**
+     * Accès RH : lecture seule, filtré sur les déclarations validées, avec
+     * export Excel. Séparé de Direction (qui a bien plus de droits).
+     */
+    public static function hasRhAccess(?string $username): bool
+    {
+        if (! $username) {
+            return false;
+        }
+
+        return DB::table('app.rh_users')->where('erp_username', $username)->where('actif', 1)->exists();
+    }
 }

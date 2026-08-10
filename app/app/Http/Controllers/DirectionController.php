@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Exports\DeclarationsExport;
+use App\Support\AccessControl;
 use App\Support\Format;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -34,7 +35,11 @@ class DirectionController extends Controller
 
     public function index(Request $request): View
     {
-        $statuses = $this->resolveStatuses($request);
+        $username = $request->user()->getAuthIdentifier();
+        $canValidate = AccessControl::hasDirectionAccess($username);
+
+        // RH : lecture seule, limité aux déclarations validées (pour la paie).
+        $statuses = $canValidate ? $this->resolveStatuses($request) : ['VALIDE'];
         $dateDebut = $request->input('date_debut', now()->startOfMonth()->toDateString());
         $dateFin = $request->input('date_fin', now()->toDateString());
         $intervenant = trim((string) $request->input('intervenant', ''));
@@ -47,14 +52,14 @@ class DirectionController extends Controller
         $intervenantOptions = $this->intervenantOptions();
         $prevalidationObligatoire = (bool) config('etrasbloc.prevalidation_obligatoire');
 
-        return view('direction.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'intervenant', 'recherche', 'intervenantOptions', 'prevalidationObligatoire'));
+        return view('direction.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'intervenant', 'recherche', 'intervenantOptions', 'prevalidationObligatoire', 'canValidate'));
     }
 
     /**
      * Liste des intervenants ayant au moins une déclaration, pour le
      * filtre "Intervenant" (recherche dans une liste) de l'écran Direction.
      */
-    private function intervenantOptions(): \Illuminate\Support\Collection
+    public function intervenantOptions(): \Illuminate\Support\Collection
     {
         return DB::table('app.vw_erp_intervenants as e')
             ->whereIn('e.CodInterv', function ($q): void {
@@ -72,7 +77,10 @@ class DirectionController extends Controller
      */
     public function exportExcel(Request $request): Response
     {
-        $statuses = $this->resolveStatuses($request);
+        $username = $request->user()->getAuthIdentifier();
+        $canValidate = AccessControl::hasDirectionAccess($username);
+
+        $statuses = $canValidate ? $this->resolveStatuses($request) : ['VALIDE'];
         $dateDebut = $request->input('date_debut', now()->startOfMonth()->toDateString());
         $dateFin = $request->input('date_fin', now()->toDateString());
         $intervenant = trim((string) $request->input('intervenant', ''));
@@ -91,7 +99,7 @@ class DirectionController extends Controller
             ->filter(fn ($status) => in_array($status, ['SOUMIS', 'PREVALIDE', 'VALIDE', 'REJETE'], true))->all();
     }
 
-    private function buildQuery(array $statuses, string $dateDebut, string $dateFin, string $intervenant = '', string $recherche = ''): \Illuminate\Database\Query\Builder
+    public function buildQuery(array $statuses, string $dateDebut, string $dateFin, string $intervenant = '', string $recherche = ''): \Illuminate\Database\Query\Builder
     {
         return DB::table('app.extra_declarations as d')
             ->leftJoin('app.vw_erp_actes_bloc_direction as a', 'd.num_intv', '=', 'a.NumIntv')
@@ -125,7 +133,7 @@ class DirectionController extends Controller
                 'a.LibelleActe', 'a.DatOpe', 'a.DesignationSalle', 'a.Chirurgien', 'a.Reanimateur', 'a.HDAnest', 'a.HFAnest', 'a.Debut_Anesthesie', 'a.Fin_Anesthesie',
                 'a.NomPatient', 'a.PrenomPatient',
                 'i.DesInterv', 'i.DesTypInterv', 'i.LoginErp', 'i.MatriculePointeuse',
-                'i.HeureEmploiDebut1', 'i.HeureEmploiFin1', 'i.HeureEmploiDebut2', 'i.HeureEmploiFin2',
+                'i.HeureEmploiDebut1', 'i.HeureEmploiFin1', 'i.HeureEmploiDebut2', 'i.HeureEmploiFin2', 'i.Repos',
                 'i.HeurePointageEntree', 'i.HeurePointageSortie'
             )
             ->orderByDesc('a.DatOpe');
@@ -133,6 +141,8 @@ class DirectionController extends Controller
 
     public function decide(Request $request, int $declaration): RedirectResponse
     {
+        abort_unless(AccessControl::hasDirectionAccess($request->user()->getAuthIdentifier()), 403, 'Accès en lecture seule : la validation est réservée à la direction.');
+
         $data = $request->validate([
             'decision' => ['required', 'in:VALIDE,REJETE'],
             'motif' => ['nullable', 'string', 'max:500'],
@@ -173,6 +183,8 @@ class DirectionController extends Controller
      */
     public function invalidate(Request $request, int $declaration): RedirectResponse
     {
+        abort_unless(AccessControl::hasDirectionAccess($request->user()->getAuthIdentifier()), 403, 'Accès en lecture seule : la dévalidation est réservée à la direction.');
+
         $data = $request->validate([
             'motif' => ['required', 'string', 'max:500'],
         ]);
