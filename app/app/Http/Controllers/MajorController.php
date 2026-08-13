@@ -38,7 +38,7 @@ class MajorController extends Controller
                 'a.HDAnest', 'a.HFAnest', 'a.Debut_Anesthesie', 'a.Fin_Anesthesie',
                 'a.NomPatient', 'a.PrenomPatient',
                 'i.DesInterv', 'i.DesTypInterv', 'i.MatriculePointeuse',
-                'i.HeureEmploiDebut1', 'i.HeureEmploiFin1', 'i.HeureEmploiDebut2', 'i.HeureEmploiFin2',
+                'i.HeureEmploiDebut1', 'i.HeureEmploiFin1', 'i.HeureEmploiDebut2', 'i.HeureEmploiFin2', 'i.Repos',
                 'i.HeurePointageEntree', 'i.HeurePointageSortie'
             )
             ->orderByDesc('a.DatOpe')
@@ -57,7 +57,7 @@ class MajorController extends Controller
     {
         $data = $request->validate([
             'decision' => ['required', 'in:PREVALIDE,REJETE'],
-            'motif' => ['nullable', 'string', 'max:500'],
+            'motif' => [$request->input('decision') === 'REJETE' ? 'required' : 'nullable', 'string', 'max:500'],
         ]);
 
         DB::transaction(function () use ($declaration, $data, $request): void {

@@ -27,12 +27,17 @@
                 <button type="button" onclick="document.getElementById('recherche-input').value='';document.getElementById('recherche-input').form.submit()" title="Vider ce filtre" style="position:absolute;right:2px;top:50%;transform:translateY(-50%);width:22px;height:22px;padding:0;border:0;background:transparent;color:#8a99a6;font-size:16px;line-height:1;cursor:pointer">×</button>
             </span>
         </label>
+        <label>Salle
+            <select name="salles[]" multiple size="3" style="min-width:170px;vertical-align:top">
+                @foreach($salleOptions as $salle)<option value="{{ $salle }}" @selected(in_array($salle, $salles, true))>{{ $salle }}</option>@endforeach
+            </select>
+        </label>
         <button>Filtrer</button>
         <button type="button" onclick="window.print()">Imprimer</button>
         <a href="{{ route('direction.export', request()->query()) }}" style="background:#16846a;color:#fff;text-decoration:none;border-radius:7px;padding:10px 14px;font:inherit;display:inline-block">Exporter Excel</a>
         </form>
     </section>
-    <section class="card"><table><thead><tr><th>Intervenant / acte</th><th>Patient</th><th>Médecins</th><th>Heure planification</th><th>Heure anesthésie</th><th>Heure emploi</th><th>Heure pointage</th><th>Saisie</th><th>Statut</th><th>Décision</th></tr></thead><tbody>
+    <section class="card"><table><thead><tr><th>Intervenant / acte</th><th>Patient</th><th>Médecins</th><th>Date acte</th><th>Heure planification</th><th>Heure anesthésie</th><th>Heure emploi</th><th>Heure pointage</th><th>Saisie</th><th>Statut</th><th>Décision</th></tr></thead><tbody>
     @forelse($declarations as $item)<tr>
         <td>
             <strong>{{ $item->DesInterv ?? $item->cod_interv }}</strong><br>
@@ -41,6 +46,9 @@
             </span><br>
             {{ $item->LibelleActe }}<br>
             <span class="muted">{{ $item->DesignationSalle ?? 'Salle non renseignée' }}</span>
+            @if($item->chevauchement)
+                <br><span class="badge" style="background:#fde3d0;color:#8a3b0a" title="Cet intervenant a une autre déclaration le même jour sur une plage horaire qui se chevauche">⚠ Chevauchement horaire</span>
+            @endif
             @if($item->observation)<br><strong>Observation :</strong> {{ $item->observation }}@endif
         </td>
         <td>
@@ -48,13 +56,12 @@
             <span class="muted">Dossier {{ $item->num_doss }}</span>
         </td>
         <td><strong>Chirurgien :</strong> {{ $item->Chirurgien }}<br><strong>Réanimateur :</strong> {{ $item->Reanimateur }}</td>
-        <td>
-            {{ \App\Support\Format::dateTime($item->HDAnest) ?? 'Non renseigné' }}<br>
-            {{ \App\Support\Format::dateTime($item->HFAnest) ?? '' }}
+        <td>{{ \App\Support\Format::date($item->DatOpe) }}</td>
+        <td style="background:#eaf3fb">
+            {{ \App\Support\Format::timeRange($item->HDAnest, $item->HFAnest) ?? 'Non renseigné' }}
         </td>
-        <td>
-            {{ \App\Support\Format::dateTime($item->Debut_Anesthesie) ?? 'Non renseigné' }}<br>
-            {{ \App\Support\Format::dateTime($item->Fin_Anesthesie) ?? '' }}
+        <td style="background:#fdf1e6">
+            {{ \App\Support\Format::timeRange($item->Debut_Anesthesie, $item->Fin_Anesthesie) ?? 'Non renseigné' }}
         </td>
         <td>
             @if($item->Repos)
@@ -93,10 +100,10 @@
                 @if($validationBloquee)
                     <p class="muted" style="margin:0 0 6px">En attente de pré-validation par le major du bloc avant validation finale.</p>
                 @endif
-                <form method="post" action="{{ route('direction.declarations.decide', $item->id) }}" class="row">@csrf @method('PATCH')
-                    <input name="motif" placeholder="Motif (facultatif)" style="min-width:120px">
-                    <button class="success" name="decision" value="VALIDE" @disabled($validationBloquee) title="{{ $validationBloquee ? 'Pré-validation requise avant validation finale' : '' }}">Valider</button>
-                    <button class="danger" name="decision" value="REJETE">Rejeter</button>
+                <form method="post" action="{{ route('direction.declarations.decide', $item->id) }}" class="row" onsubmit="return true">@csrf @method('PATCH')
+                    <input name="motif" placeholder="Motif (obligatoire si rejet)" style="min-width:150px">
+                    <button class="success" name="decision" value="VALIDE" @disabled($validationBloquee) title="{{ $validationBloquee ? 'Pré-validation requise avant validation finale' : '' }}" onclick="this.form.querySelector('[name=motif]').required=false">Valider</button>
+                    <button class="danger" name="decision" value="REJETE" onclick="this.form.querySelector('[name=motif]').required=true">Rejeter</button>
                     <button type="button" class="btn-outline" onclick="openAuditModal({{ $item->id }})">Traçabilité</button>
                 </form>
             @elseif($canValidate)
@@ -117,7 +124,7 @@
                 <button type="button" class="btn-outline" style="margin-top:8px" onclick="openAuditModal({{ $item->id }})">Traçabilité</button>
             @endif
         </td>
-    </tr>@empty <tr><td colspan="10">Aucune déclaration.</td></tr>@endforelse
+    </tr>@empty <tr><td colspan="11">Aucune déclaration.</td></tr>@endforelse
     </tbody></table><div style="margin-top:16px">{{ $declarations->links() }}</div></section>
 
     <div id="pointage-modal-overlay" class="modal-overlay">

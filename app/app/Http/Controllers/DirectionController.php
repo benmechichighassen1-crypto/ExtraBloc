@@ -44,15 +44,30 @@ class DirectionController extends Controller
         $dateFin = $request->input('date_fin', now()->toDateString());
         $intervenant = trim((string) $request->input('intervenant', ''));
         $recherche = trim((string) $request->input('recherche', ''));
+        $salles = array_values(array_filter((array) $request->input('salles', [])));
 
-        $declarations = $this->buildQuery($statuses, $dateDebut, $dateFin, $intervenant, $recherche)
+        $declarations = $this->buildQuery($statuses, $dateDebut, $dateFin, $intervenant, $recherche, $salles)
             ->paginate(25)
             ->withQueryString();
 
         $intervenantOptions = $this->intervenantOptions();
+        $salleOptions = $this->salleOptions();
         $prevalidationObligatoire = (bool) config('etrasbloc.prevalidation_obligatoire');
 
-        return view('direction.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'intervenant', 'recherche', 'intervenantOptions', 'prevalidationObligatoire', 'canValidate'));
+        return view('direction.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'intervenant', 'recherche', 'salles', 'intervenantOptions', 'salleOptions', 'prevalidationObligatoire', 'canValidate'));
+    }
+
+    /**
+     * Liste des salles de bloc utilisées, pour le filtre "Salle" (choix
+     * multiple) de l'écran Direction.
+     */
+    public function salleOptions(): \Illuminate\Support\Collection
+    {
+        return DB::table('app.vw_erp_actes_bloc_direction')
+            ->whereNotNull('DesignationSalle')
+            ->distinct()
+            ->orderBy('DesignationSalle')
+            ->pluck('DesignationSalle');
     }
 
     /**
@@ -85,8 +100,9 @@ class DirectionController extends Controller
         $dateFin = $request->input('date_fin', now()->toDateString());
         $intervenant = trim((string) $request->input('intervenant', ''));
         $recherche = trim((string) $request->input('recherche', ''));
+        $salles = array_values(array_filter((array) $request->input('salles', [])));
 
-        $rows = $this->buildQuery($statuses, $dateDebut, $dateFin, $intervenant, $recherche)->get();
+        $rows = $this->buildQuery($statuses, $dateDebut, $dateFin, $intervenant, $recherche, $salles)->get();
 
         $filename = 'controle_direction_' . $dateDebut . '_au_' . $dateFin . '.xlsx';
 
@@ -99,7 +115,7 @@ class DirectionController extends Controller
             ->filter(fn ($status) => in_array($status, ['SOUMIS', 'PREVALIDE', 'VALIDE', 'REJETE'], true))->all();
     }
 
-    public function buildQuery(array $statuses, string $dateDebut, string $dateFin, string $intervenant = '', string $recherche = ''): \Illuminate\Database\Query\Builder
+    public function buildQuery(array $statuses, string $dateDebut, string $dateFin, string $intervenant = '', string $recherche = '', array $salles = []): \Illuminate\Database\Query\Builder
     {
         return DB::table('app.extra_declarations as d')
             ->leftJoin('app.vw_erp_actes_bloc_direction as a', 'd.num_intv', '=', 'a.NumIntv')
@@ -109,6 +125,7 @@ class DirectionController extends Controller
             ->when($statuses, fn ($q) => $q->whereIn('d.statut', $statuses))
             ->whereDate('a.DatOpe', '>=', $dateDebut)
             ->whereDate('a.DatOpe', '<=', $dateFin)
+            ->when($salles !== [], fn ($q) => $q->whereIn('a.DesignationSalle', $salles))
             ->when($intervenant !== '', function ($q) use ($intervenant): void {
                 // Le champ "Intervenant" est rempli via une liste avec recherche
                 // (datalist) au format "CodInterv — Nom" ; si l'utilisateur a
@@ -136,7 +153,27 @@ class DirectionController extends Controller
                 'i.HeureEmploiDebut1', 'i.HeureEmploiFin1', 'i.HeureEmploiDebut2', 'i.HeureEmploiFin2', 'i.Repos',
                 'i.HeurePointageEntree', 'i.HeurePointageSortie'
             )
-            ->orderByDesc('a.DatOpe');
+            // Détecte une AUTRE déclaration du même intervenant, le même
+            // jour, dont la plage horaire de planification chevauche celle
+            // de cette ligne (hors déclarations déjà refusées) — pour
+            // signaler visuellement les doublons/chevauchements à
+            // contrôler (ex: 10:00-16:00 et 11:00-15:30 le même jour).
+            ->selectRaw("CASE WHEN EXISTS (
+                SELECT 1 FROM app.extra_declarations d2
+                INNER JOIN app.vw_erp_actes_bloc_direction a2 ON d2.num_intv = a2.NumIntv
+                WHERE d2.cod_interv = d.cod_interv
+                  AND d2.id <> d.id
+                  AND d2.statut <> 'REJETE'
+                  AND a2.HDAnest IS NOT NULL AND a2.HFAnest IS NOT NULL
+                  AND a.HDAnest IS NOT NULL AND a.HFAnest IS NOT NULL
+                  AND CAST(a2.DatOpe AS date) = CAST(a.DatOpe AS date)
+                  AND a2.HDAnest < a.HFAnest AND a2.HFAnest > a.HDAnest
+            ) THEN 1 ELSE 0 END AS chevauchement")
+            // Regroupe par intervenant, puis trie chaque groupe par date et
+            // heure d'acte : facilite le contrôle d'un même intervenant sur
+            // plusieurs jours/actes d'affilée (demande Direction).
+            ->orderBy('i.DesInterv')
+            ->orderBy('a.DatOpe');
     }
 
     public function decide(Request $request, int $declaration): RedirectResponse
@@ -145,7 +182,7 @@ class DirectionController extends Controller
 
         $data = $request->validate([
             'decision' => ['required', 'in:VALIDE,REJETE'],
-            'motif' => ['nullable', 'string', 'max:500'],
+            'motif' => [$request->input('decision') === 'REJETE' ? 'required' : 'nullable', 'string', 'max:500'],
         ]);
 
         DB::transaction(function () use ($declaration, $data, $request): void {

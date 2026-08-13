@@ -74,4 +74,39 @@ class Format
             return null;
         }
     }
+
+    /**
+     * Formate une plage horaire "début → fin" en n'affichant que les heures
+     * (HH:MM). Si la fin tombe un jour différent du début (ex: acte commencé
+     * à 23:00 et terminé après minuit), la date de fin est ajoutée pour
+     * lever toute ambiguïté.
+     */
+    public static function timeRange(mixed $start, mixed $end): ?string
+    {
+        if (($start === null || $start === '') && ($end === null || $end === '')) {
+            return null;
+        }
+
+        try {
+            $startC = ($start !== null && $start !== '') ? Carbon::parse($start) : null;
+            $endC = ($end !== null && $end !== '') ? Carbon::parse($end) : null;
+        } catch (Throwable) {
+            return null;
+        }
+
+        if ($startC === null) {
+            return $endC?->format('H:i');
+        }
+
+        if ($endC === null) {
+            return $startC->format('H:i');
+        }
+
+        $endLabel = $endC->format('H:i');
+        if (! $startC->isSameDay($endC)) {
+            $endLabel = $endC->format('d/m').' '.$endLabel;
+        }
+
+        return $startC->format('H:i').' → '.$endLabel;
+    }
 }
