@@ -44,6 +44,7 @@
 </nav></header>
 <main>
     @if(session('success')) <div class="notice">{{ session('success') }}</div> @endif
+    @if(session('warning')) <div class="notice" style="background:#fff0c7;color:#805900">{{ session('warning') }}</div> @endif
     {{ $slot }}
 </main>
 </body>

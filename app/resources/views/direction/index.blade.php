@@ -8,35 +8,70 @@
         @if(!$canValidate)
             <p class="muted">Consultation en lecture seule des actes extra validés par la Direction, pour traitement de la paie.</p>
         @endif
-        <form method="get" class="row"><label>Du <input type="date" name="date_debut" value="{{ $dateDebut }}"></label><label>Au <input type="date" name="date_fin" value="{{ $dateFin }}"></label>
-        @if($canValidate)
-            @foreach($filterableStatuses as $value => $label)<label><input type="checkbox" name="statuts[]" value="{{ $value }}" @checked(in_array($value, $statuses, true))> {{ $label }}</label>@endforeach
-        @endif
-        <label>Intervenant
-            <span style="position:relative;display:inline-block">
-                <input list="intervenant-options" id="intervenant-input" name="intervenant" value="{{ $intervenant }}" placeholder="Rechercher un intervenant…" autocomplete="off" style="min-width:220px;padding-right:28px">
-                <button type="button" onclick="document.getElementById('intervenant-input').value='';document.getElementById('intervenant-input').form.submit()" title="Vider ce filtre" style="position:absolute;right:2px;top:50%;transform:translateY(-50%);width:22px;height:22px;padding:0;border:0;background:transparent;color:#8a99a6;font-size:16px;line-height:1;cursor:pointer">×</button>
-            </span>
-            <datalist id="intervenant-options">
-                @foreach($intervenantOptions as $opt)<option value="{{ $opt->CodInterv }} — {{ $opt->DesInterv }}">@endforeach
-            </datalist>
-        </label>
-        <label>Dossier / Patient
-            <span style="position:relative;display:inline-block">
-                <input type="text" id="recherche-input" name="recherche" value="{{ $recherche }}" placeholder="N° dossier ou nom patient…" style="min-width:180px;padding-right:28px">
-                <button type="button" onclick="document.getElementById('recherche-input').value='';document.getElementById('recherche-input').form.submit()" title="Vider ce filtre" style="position:absolute;right:2px;top:50%;transform:translateY(-50%);width:22px;height:22px;padding:0;border:0;background:transparent;color:#8a99a6;font-size:16px;line-height:1;cursor:pointer">×</button>
-            </span>
-        </label>
-        <label>Salle
-            <select name="salles[]" multiple size="3" style="min-width:170px;vertical-align:top">
-                @foreach($salleOptions as $salle)<option value="{{ $salle }}" @selected(in_array($salle, $salles, true))>{{ $salle }}</option>@endforeach
-            </select>
-        </label>
-        <button>Filtrer</button>
-        <button type="button" onclick="window.print()">Imprimer</button>
-        <a href="{{ route('direction.export', request()->query()) }}" style="background:#16846a;color:#fff;text-decoration:none;border-radius:7px;padding:10px 14px;font:inherit;display:inline-block">Exporter Excel</a>
+        <form method="get" class="filter-bar">
+            <div class="filter-grid">
+                <div class="filter-field">
+                    <label class="filter-label">Période</label>
+                    <div class="row" style="gap:6px;flex-wrap:nowrap">
+                        <input type="date" name="date_debut" value="{{ $dateDebut }}">
+                        <span class="muted">→</span>
+                        <input type="date" name="date_fin" value="{{ $dateFin }}">
+                    </div>
+                </div>
+                <div class="filter-field">
+                    <label class="filter-label" for="intervenant-input">Intervenant</label>
+                    <span style="position:relative;display:inline-block">
+                        <input list="intervenant-options" id="intervenant-input" name="intervenant" value="{{ $intervenant }}" placeholder="Rechercher un intervenant…" autocomplete="off" style="min-width:220px;padding-right:28px">
+                        <button type="button" onclick="document.getElementById('intervenant-input').value='';document.getElementById('intervenant-input').form.submit()" title="Vider ce filtre" class="clear-field-btn">×</button>
+                    </span>
+                    <datalist id="intervenant-options">
+                        @foreach($intervenantOptions as $opt)<option value="{{ $opt->CodInterv }} — {{ $opt->DesInterv }}">@endforeach
+                    </datalist>
+                </div>
+                <div class="filter-field">
+                    <label class="filter-label" for="recherche-input">Dossier / Patient</label>
+                    <span style="position:relative;display:inline-block">
+                        <input type="text" id="recherche-input" name="recherche" value="{{ $recherche }}" placeholder="N° dossier ou nom patient…" style="min-width:180px;padding-right:28px">
+                        <button type="button" onclick="document.getElementById('recherche-input').value='';document.getElementById('recherche-input').form.submit()" title="Vider ce filtre" class="clear-field-btn">×</button>
+                    </span>
+                </div>
+                <div class="filter-field">
+                    <label class="filter-label">Salle <span class="muted" style="text-transform:none;font-weight:400">(plusieurs choix : Ctrl+clic)</span></label>
+                    <select name="salles[]" multiple size="3" style="min-width:190px">
+                        @foreach($salleOptions as $salle)<option value="{{ $salle }}" @selected(in_array($salle, $salles, true))>{{ $salle }}</option>@endforeach
+                    </select>
+                </div>
+            </div>
+
+            @if($canValidate)
+                <div class="filter-field">
+                    <label class="filter-label">Statut</label>
+                    <div class="filter-statuses">
+                        @foreach($filterableStatuses as $value => $label)
+                            <label class="status-toggle"><input type="checkbox" name="statuts[]" value="{{ $value }}" @checked(in_array($value, $statuses, true))> {{ $label }}</label>
+                        @endforeach
+                    </div>
+                </div>
+            @endif
+
+            <div class="filter-actions">
+                <button>Filtrer</button>
+                <button type="button" onclick="window.print()">Imprimer</button>
+                <a href="{{ route('direction.export', request()->query()) }}" style="background:#16846a;color:#fff;text-decoration:none;border-radius:7px;padding:10px 14px;font:inherit;display:inline-block">Exporter Excel</a>
+            </div>
         </form>
     </section>
+
+    <style>
+        .filter-bar { display:flex; flex-direction:column; gap:18px }
+        .filter-grid { display:flex; flex-wrap:wrap; gap:22px; align-items:flex-start }
+        .filter-field { display:flex; flex-direction:column; gap:6px }
+        .filter-label { font-size:12px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:#3a4a56 }
+        .filter-statuses { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center }
+        .status-toggle { font-weight:400; text-transform:none; letter-spacing:normal; color:#1c2d3b; display:inline-flex; align-items:center; gap:5px; background:#f3f7fa; border:1px solid #e6edf2; border-radius:20px; padding:6px 12px 6px 10px }
+        .filter-actions { display:flex; flex-wrap:wrap; gap:10px; padding-top:6px; border-top:1px solid #e6edf2 }
+        .clear-field-btn { position:absolute; right:2px; top:50%; transform:translateY(-50%); width:22px; height:22px; padding:0; border:0; background:transparent; color:#8a99a6; font-size:16px; line-height:1; cursor:pointer }
+    </style>
     <section class="card"><table><thead><tr><th>Intervenant / acte</th><th>Patient</th><th>Médecins</th><th>Date acte</th><th>Heure planification</th><th>Heure anesthésie</th><th>Heure emploi</th><th>Heure pointage</th><th>Saisie</th><th>Statut</th><th>Décision</th></tr></thead><tbody>
     @forelse($declarations as $item)<tr>
         <td>
@@ -48,6 +83,9 @@
             <span class="muted">{{ $item->DesignationSalle ?? 'Salle non renseignée' }}</span>
             @if($item->chevauchement)
                 <br><span class="badge" style="background:#fde3d0;color:#8a3b0a" title="Cet intervenant a une autre déclaration le même jour sur une plage horaire qui se chevauche">⚠ Chevauchement horaire</span>
+            @endif
+            @if($item->doublon_sous_dossier)
+                <br><span class="badge" style="background:#fde3d0;color:#8a3b0a" title="Même patient, même acte et même intervenant déjà déclaré sur un autre numéro de dossier (probable sous-dossier créé par la facturation)">⚠ Doublon inter-dossier</span>
             @endif
             @if($item->observation)<br><strong>Observation :</strong> {{ $item->observation }}@endif
         </td>
@@ -89,28 +127,28 @@
         </td>
         <td>{{ $item->declared_by_username }}<br><span class="muted">{{ \App\Support\Format::dateTime($item->declared_at) }}</span></td>
         <td><span class="badge status-{{ strtolower($item->statut) }}">{{ $statusLabels[$item->statut] ?? $item->statut }}</span></td>
-        <td>
+        <td style="text-align:right">
             @if($canValidate && in_array($item->statut, ['SOUMIS','PREVALIDE']))
                 @if($item->statut === 'PREVALIDE')
-                    <div class="muted" style="margin-bottom:6px">Prévalidé par <strong>{{ $item->prevalide_par_username }}</strong> le {{ \App\Support\Format::dateTime($item->prevalide_le) }}
+                    <div class="muted" style="margin-bottom:6px;text-align:left">Prévalidé par <strong>{{ $item->prevalide_par_username }}</strong> le {{ \App\Support\Format::dateTime($item->prevalide_le) }}
                     @if($item->motif_prevalidation)<br>Motif : {{ $item->motif_prevalidation }}@endif
                     </div>
                 @endif
                 @php($validationBloquee = $prevalidationObligatoire && $item->statut !== 'PREVALIDE')
                 @if($validationBloquee)
-                    <p class="muted" style="margin:0 0 6px">En attente de pré-validation par le major du bloc avant validation finale.</p>
+                    <p class="muted" style="margin:0 0 6px;text-align:left">En attente de pré-validation par le major du bloc avant validation finale.</p>
                 @endif
-                <form method="post" action="{{ route('direction.declarations.decide', $item->id) }}" class="row" onsubmit="return true">@csrf @method('PATCH')
-                    <input name="motif" placeholder="Motif (obligatoire si rejet)" style="min-width:150px">
+                <form method="post" action="{{ route('direction.declarations.decide', $item->id) }}" class="row" style="justify-content:flex-end;flex-wrap:nowrap">@csrf @method('PATCH')
+                    <input name="motif" placeholder="Motif (obligatoire si refus)" style="min-width:150px">
                     <button class="success" name="decision" value="VALIDE" @disabled($validationBloquee) title="{{ $validationBloquee ? 'Pré-validation requise avant validation finale' : '' }}" onclick="this.form.querySelector('[name=motif]').required=false">Valider</button>
-                    <button class="danger" name="decision" value="REJETE" onclick="this.form.querySelector('[name=motif]').required=true">Rejeter</button>
+                    <button class="danger" name="decision" value="REJETE" onclick="this.form.querySelector('[name=motif]').required=true">Refuser</button>
                     <button type="button" class="btn-outline" onclick="openAuditModal({{ $item->id }})">Traçabilité</button>
                 </form>
             @elseif($canValidate)
-                <div><strong>{{ $item->valide_par_username }}</strong><br>
+                <div style="text-align:left"><strong>{{ $item->valide_par_username }}</strong><br>
                 <span class="muted">{{ \App\Support\Format::dateTime($item->valide_le) }}</span>
                 @if($item->motif_decision)<br><span class="muted">Motif : {{ $item->motif_decision }}</span>@endif</div>
-                <form method="post" action="{{ route('direction.declarations.invalidate', $item->id) }}" class="row" style="margin-top:8px" onsubmit="return confirm('Confirmer l’annulation de cette décision ? La déclaration repassera « En attente ».');">
+                <form method="post" action="{{ route('direction.declarations.invalidate', $item->id) }}" class="row" style="margin-top:8px;justify-content:flex-end;flex-wrap:nowrap" onsubmit="return confirm('Confirmer l’annulation de cette décision ? La déclaration repassera « En attente ».');">
                     @csrf @method('PATCH')
                     <input name="motif" placeholder="Motif de la correction" required style="min-width:130px">
                     <button type="submit" style="background:#c67c1f">Dévalider</button>
@@ -118,7 +156,7 @@
                 </form>
             @else
                 {{-- RH : lecture seule, aucune action possible --}}
-                <div><strong>{{ $item->valide_par_username }}</strong><br>
+                <div style="text-align:left"><strong>{{ $item->valide_par_username }}</strong><br>
                 <span class="muted">{{ \App\Support\Format::dateTime($item->valide_le) }}</span>
                 @if($item->motif_decision)<br><span class="muted">Motif : {{ $item->motif_decision }}</span>@endif</div>
                 <button type="button" class="btn-outline" style="margin-top:8px" onclick="openAuditModal({{ $item->id }})">Traçabilité</button>

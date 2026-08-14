@@ -52,22 +52,22 @@
         </td>
         <td>{{ $item->declared_by_username }}<br><span class="muted">{{ \App\Support\Format::dateTime($item->declared_at) }}</span></td>
         <td><span class="badge status-{{ strtolower($item->statut) }}">{{ $statusLabels[$item->statut] ?? $item->statut }}</span></td>
-        <td>
+        <td style="text-align:right">
             @if($item->statut === 'SOUMIS')
-                <form method="post" action="{{ route('major.declarations.decide', $item->id) }}" class="row">@csrf @method('PATCH')
-                    <input name="motif" placeholder="Motif (facultatif)" style="min-width:120px">
-                    <button class="success" name="decision" value="PREVALIDE">Prévalider</button>
-                    <button class="danger" name="decision" value="REJETE">Rejeter</button>
+                <form method="post" action="{{ route('major.declarations.decide', $item->id) }}" class="row" style="justify-content:flex-end;flex-wrap:nowrap">@csrf @method('PATCH')
+                    <input name="motif" placeholder="Motif (obligatoire si refus)" style="min-width:150px">
+                    <button class="success" name="decision" value="PREVALIDE" onclick="this.form.querySelector('[name=motif]').required=false">Prévalider</button>
+                    <button class="danger" name="decision" value="REJETE" onclick="this.form.querySelector('[name=motif]').required=true">Refuser</button>
                 </form>
             @elseif($item->statut === 'PREVALIDE')
-                <strong>{{ $item->prevalide_par_username }}</strong><br>
+                <div style="text-align:left"><strong>{{ $item->prevalide_par_username }}</strong><br>
                 <span class="muted">{{ \App\Support\Format::dateTime($item->prevalide_le) }}</span>
                 @if($item->motif_prevalidation)<br><span class="muted">Motif : {{ $item->motif_prevalidation }}</span>@endif
-                <br><span class="muted">Transmis à la Direction.</span>
+                <br><span class="muted">Transmis à la Direction.</span></div>
             @else
-                <strong>{{ $item->valide_par_username }}</strong><br>
+                <div style="text-align:left"><strong>{{ $item->valide_par_username }}</strong><br>
                 <span class="muted">{{ \App\Support\Format::dateTime($item->valide_le) }}</span>
-                @if($item->motif_decision)<br><span class="muted">Motif : {{ $item->motif_decision }}</span>@endif
+                @if($item->motif_decision)<br><span class="muted">Motif : {{ $item->motif_decision }}</span>@endif</div>
             @endif
         </td>
     </tr>@empty <tr><td colspan="9">Aucune déclaration.</td></tr>@endforelse

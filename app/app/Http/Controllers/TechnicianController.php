@@ -102,7 +102,17 @@ class TechnicianController extends Controller
 
         abort_if($validParticipants->count() !== count(array_unique($data['cod_interv'])), 422, 'Un intervenant sélectionné ne fait pas partie de cet acte.');
 
-        $created = DB::transaction(function () use ($data, $validParticipants, $request): int {
+        // Pour détecter un doublon inter-dossier (voir plus bas) : l'acte
+        // concerné, avec l'identifiant patient stable (persiste même si la
+        // facturation transfère l'acte vers un sous-dossier).
+        $acte = DB::table('app.vw_erp_actes_bloc_direction')
+            ->where('NumIntv', $data['num_intv'])
+            ->select('CodeActe', 'IdentifiantPatient')
+            ->first();
+
+        $skippedDuplicates = [];
+
+        $created = DB::transaction(function () use ($data, $validParticipants, $request, $acte, &$skippedDuplicates): int {
             $count = 0;
             foreach ($validParticipants as $participant) {
                 $exists = DB::table('app.extra_declarations')
@@ -112,6 +122,27 @@ class TechnicianController extends Controller
                 if ($exists) {
                     continue;
                 }
+
+                // Doublon inter-dossier : même intervenant, même patient
+                // (IdentifiantPatient, stable même après transfert vers un
+                // sous-dossier par la facturation) et même acte, déjà
+                // déclaré sur un AUTRE numéro de dossier et non refusé.
+                if ($acte && $acte->IdentifiantPatient) {
+                    $doublon = DB::table('app.extra_declarations as d2')
+                        ->join('app.vw_erp_actes_bloc_direction as a2', 'd2.num_intv', '=', 'a2.NumIntv')
+                        ->where('d2.cod_interv', $participant->CodInterv)
+                        ->where('d2.statut', '<>', 'REJETE')
+                        ->where('a2.IdentifiantPatient', $acte->IdentifiantPatient)
+                        ->where('a2.CodeActe', $acte->CodeActe)
+                        ->where('d2.num_doss', '<>', $data['num_doss'])
+                        ->exists();
+
+                    if ($doublon) {
+                        $skippedDuplicates[] = $participant->CodInterv;
+                        continue;
+                    }
+                }
+
                 $id = DB::table('app.extra_declarations')->insertGetId([
                     'num_intv' => $data['num_intv'],
                     'num_doss' => $data['num_doss'],
@@ -132,7 +163,12 @@ class TechnicianController extends Controller
             return $count;
         });
 
+        $message = $created.' déclaration(s) transmise(s) à la direction.';
+        if ($skippedDuplicates !== []) {
+            $message .= ' '.count($skippedDuplicates).' intervenant(s) NON déclaré(s) : une déclaration existe déjà pour ce même patient et ce même acte sur un autre dossier (probable sous-dossier créé par la facturation). Vérifiez avant de resaisir.';
+        }
+
         return redirect()->route('technician.index', ['dossier' => $data['num_doss']])
-            ->with('success', $created.' déclaration(s) transmise(s) à la direction.');
+            ->with($skippedDuplicates !== [] ? 'warning' : 'success', $message);
     }
 }

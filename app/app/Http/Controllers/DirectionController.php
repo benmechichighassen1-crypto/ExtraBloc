@@ -169,6 +169,21 @@ class DirectionController extends Controller
                   AND CAST(a2.DatOpe AS date) = CAST(a.DatOpe AS date)
                   AND a2.HDAnest < a.HFAnest AND a2.HFAnest > a.HDAnest
             ) THEN 1 ELSE 0 END AS chevauchement")
+            // Doublon inter-dossier : même intervenant, même patient (via
+            // l'identifiant stable, indépendant du NumDoss) et même acte,
+            // déjà déclaré sur un AUTRE dossier — cas d'un acte transféré
+            // en sous-dossier par la facturation après la saisie initiale.
+            ->selectRaw("CASE WHEN EXISTS (
+                SELECT 1 FROM app.extra_declarations d3
+                INNER JOIN app.vw_erp_actes_bloc_direction a3 ON d3.num_intv = a3.NumIntv
+                WHERE d3.cod_interv = d.cod_interv
+                  AND d3.id <> d.id
+                  AND d3.statut <> 'REJETE'
+                  AND a3.IdentifiantPatient IS NOT NULL AND a.IdentifiantPatient IS NOT NULL
+                  AND a3.IdentifiantPatient = a.IdentifiantPatient
+                  AND a3.CodeActe = a.CodeActe
+                  AND a3.NumDoss <> a.NumDoss
+            ) THEN 1 ELSE 0 END AS doublon_sous_dossier")
             // Regroupe par intervenant, puis trie chaque groupe par date et
             // heure d'acte : facilite le contrôle d'un même intervenant sur
             // plusieurs jours/actes d'affilée (demande Direction).
