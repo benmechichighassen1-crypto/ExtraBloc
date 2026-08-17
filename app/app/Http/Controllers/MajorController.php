@@ -10,42 +10,36 @@ use Illuminate\View\View;
 class MajorController extends Controller
 {
     /** Libellés lisibles des statuts (identiques à DirectionController). */
-    public const STATUS_LABELS = [
-        'SOUMIS' => 'En attente',
-        'PREVALIDE' => 'Prévalidé',
-        'VALIDE' => 'Validé',
-        'REJETE' => 'Refusé',
-    ];
+    public const STATUS_LABELS = DirectionController::STATUS_LABELS;
 
+    /**
+     * Réutilise DirectionController::buildQuery() (filtres bloc, intervenant,
+     * dossier/patient, tri par intervenant, badges chevauchement et doublon
+     * inter-dossier) plutôt que de dupliquer la requête. Par défaut, seules
+     * les déclarations "En attente" sont chargées — réduit le nombre de
+     * lignes, donc le nombre d'allers-retours vers l'ERP par ligne
+     * (planning, pointage), à l'ouverture de l'écran.
+     */
     public function index(Request $request): View
     {
-        $statuses = collect($request->input('statuts', ['SOUMIS', 'PREVALIDE', 'REJETE']))
+        $direction = new DirectionController();
+
+        $statuses = collect($request->input('statuts', ['SOUMIS']))
             ->filter(fn ($status) => array_key_exists($status, self::STATUS_LABELS))->all();
         $dateDebut = $request->input('date_debut', now()->startOfMonth()->toDateString());
         $dateFin = $request->input('date_fin', now()->toDateString());
+        $intervenant = trim((string) $request->input('intervenant', ''));
+        $recherche = trim((string) $request->input('recherche', ''));
+        $bloc = trim((string) $request->input('bloc', ''));
 
-        $declarations = DB::table('app.extra_declarations as d')
-            ->leftJoin('app.vw_erp_actes_bloc_direction as a', 'd.num_intv', '=', 'a.NumIntv')
-            ->leftJoin('app.vw_erp_acte_intervenants as i', function ($join): void {
-                $join->on('d.num_intv', '=', 'i.NumIntv')->on('d.cod_interv', '=', 'i.CodInterv');
-            })
-            ->when($statuses, fn ($q) => $q->whereIn('d.statut', $statuses))
-            ->whereDate('a.DatOpe', '>=', $dateDebut)
-            ->whereDate('a.DatOpe', '<=', $dateFin)
-            ->select(
-                'd.*',
-                'a.LibelleActe', 'a.DatOpe', 'a.DesignationSalle', 'a.Chirurgien', 'a.Reanimateur',
-                'a.HDAnest', 'a.HFAnest', 'a.Debut_Anesthesie', 'a.Fin_Anesthesie',
-                'a.NomPatient', 'a.PrenomPatient',
-                'i.DesInterv', 'i.DesTypInterv', 'i.MatriculePointeuse',
-                'i.HeureEmploiDebut1', 'i.HeureEmploiFin1', 'i.HeureEmploiDebut2', 'i.HeureEmploiFin2', 'i.Repos',
-                'i.HeurePointageEntree', 'i.HeurePointageSortie'
-            )
-            ->orderByDesc('a.DatOpe')
+        $declarations = $direction->buildQuery($statuses, $dateDebut, $dateFin, $intervenant, $recherche, $bloc)
             ->paginate(25)
             ->withQueryString();
 
-        return view('major.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin'));
+        $intervenantOptions = $direction->intervenantOptions();
+        $blocOptions = $direction->blocOptions();
+
+        return view('major.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'intervenant', 'recherche', 'bloc', 'intervenantOptions', 'blocOptions'));
     }
 
     /**

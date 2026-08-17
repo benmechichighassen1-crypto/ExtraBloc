@@ -103,11 +103,14 @@ class TechnicianController extends Controller
         abort_if($validParticipants->count() !== count(array_unique($data['cod_interv'])), 422, 'Un intervenant sélectionné ne fait pas partie de cet acte.');
 
         // Pour détecter un doublon inter-dossier (voir plus bas) : l'acte
-        // concerné, avec l'identifiant patient stable (persiste même si la
-        // facturation transfère l'acte vers un sous-dossier).
+        // concerné, avec les identifiants patient stables (persistent même
+        // si la facturation transfère l'acte vers un sous-dossier). Le
+        // numéro de CIN (CinPatient) est privilégié : plus fiable que
+        // IdentifiantPatient, qui peut différer entre le dossier d'origine
+        // et un sous-dossier créé par la facturation.
         $acte = DB::table('app.vw_erp_actes_bloc_direction')
             ->where('NumIntv', $data['num_intv'])
-            ->select('CodeActe', 'IdentifiantPatient')
+            ->select('CodeActe', 'IdentifiantPatient', 'CinPatient')
             ->first();
 
         $skippedDuplicates = [];
@@ -123,18 +126,24 @@ class TechnicianController extends Controller
                     continue;
                 }
 
-                // Doublon inter-dossier : même intervenant, même patient
-                // (IdentifiantPatient, stable même après transfert vers un
-                // sous-dossier par la facturation) et même acte, déjà
-                // déclaré sur un AUTRE numéro de dossier et non refusé.
-                if ($acte && $acte->IdentifiantPatient) {
+                // Doublon inter-dossier : même intervenant et même acte déjà
+                // déclarés sur un AUTRE numéro de dossier (non refusé), pour
+                // le même patient (CinPatient en priorité, IdentifiantPatient
+                // en repli si le CIN n'est pas renseigné).
+                if ($acte && ($acte->CinPatient || $acte->IdentifiantPatient)) {
                     $doublon = DB::table('app.extra_declarations as d2')
                         ->join('app.vw_erp_actes_bloc_direction as a2', 'd2.num_intv', '=', 'a2.NumIntv')
                         ->where('d2.cod_interv', $participant->CodInterv)
                         ->where('d2.statut', '<>', 'REJETE')
-                        ->where('a2.IdentifiantPatient', $acte->IdentifiantPatient)
                         ->where('a2.CodeActe', $acte->CodeActe)
                         ->where('d2.num_doss', '<>', $data['num_doss'])
+                        ->where(function ($q) use ($acte): void {
+                            if ($acte->CinPatient) {
+                                $q->where('a2.CinPatient', $acte->CinPatient);
+                            } else {
+                                $q->where('a2.IdentifiantPatient', $acte->IdentifiantPatient);
+                            }
+                        })
                         ->exists();
 
                     if ($doublon) {

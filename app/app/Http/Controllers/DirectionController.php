@@ -39,35 +39,38 @@ class DirectionController extends Controller
         $canValidate = AccessControl::hasDirectionAccess($username);
 
         // RH : lecture seule, limité aux déclarations validées (pour la paie).
+        // Direction : par défaut, seules les déclarations "Prévalidé" sont
+        // chargées (au lieu de tout charger) — réduit le nombre de lignes,
+        // donc le nombre d'allers-retours vers l'ERP par ligne (planning,
+        // pointage). L'utilisateur peut toujours élargir via les filtres.
         $statuses = $canValidate ? $this->resolveStatuses($request) : ['VALIDE'];
         $dateDebut = $request->input('date_debut', now()->startOfMonth()->toDateString());
         $dateFin = $request->input('date_fin', now()->toDateString());
         $intervenant = trim((string) $request->input('intervenant', ''));
         $recherche = trim((string) $request->input('recherche', ''));
-        $salles = array_values(array_filter((array) $request->input('salles', [])));
+        $bloc = trim((string) $request->input('bloc', ''));
 
-        $declarations = $this->buildQuery($statuses, $dateDebut, $dateFin, $intervenant, $recherche, $salles)
+        $declarations = $this->buildQuery($statuses, $dateDebut, $dateFin, $intervenant, $recherche, $bloc)
             ->paginate(25)
             ->withQueryString();
 
         $intervenantOptions = $this->intervenantOptions();
-        $salleOptions = $this->salleOptions();
+        $blocOptions = $this->blocOptions();
         $prevalidationObligatoire = (bool) config('etrasbloc.prevalidation_obligatoire');
 
-        return view('direction.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'intervenant', 'recherche', 'salles', 'intervenantOptions', 'salleOptions', 'prevalidationObligatoire', 'canValidate'));
+        return view('direction.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'intervenant', 'recherche', 'bloc', 'intervenantOptions', 'blocOptions', 'prevalidationObligatoire', 'canValidate'));
     }
 
     /**
-     * Liste des salles de bloc utilisées, pour le filtre "Salle" (choix
-     * multiple) de l'écran Direction.
+     * Blocs opératoires (ex: "Bloc Opératoire" regroupant les salles 1 à
+     * 5), pour le filtre "Bloc" (choix unique — la direction valide
+     * bloc par bloc, un multi-choix sur les salles n'était pas pratique).
      */
-    public function salleOptions(): \Illuminate\Support\Collection
+    public function blocOptions(): \Illuminate\Support\Collection
     {
-        return DB::table('app.vw_erp_actes_bloc_direction')
-            ->whereNotNull('DesignationSalle')
-            ->distinct()
-            ->orderBy('DesignationSalle')
-            ->pluck('DesignationSalle');
+        return DB::table('app.vw_erp_blocs')
+            ->orderBy('LibBloc')
+            ->get(['CodBloc', 'LibBloc']);
     }
 
     /**
@@ -100,9 +103,9 @@ class DirectionController extends Controller
         $dateFin = $request->input('date_fin', now()->toDateString());
         $intervenant = trim((string) $request->input('intervenant', ''));
         $recherche = trim((string) $request->input('recherche', ''));
-        $salles = array_values(array_filter((array) $request->input('salles', [])));
+        $bloc = trim((string) $request->input('bloc', ''));
 
-        $rows = $this->buildQuery($statuses, $dateDebut, $dateFin, $intervenant, $recherche, $salles)->get();
+        $rows = $this->buildQuery($statuses, $dateDebut, $dateFin, $intervenant, $recherche, $bloc)->get();
 
         $filename = 'controle_direction_' . $dateDebut . '_au_' . $dateFin . '.xlsx';
 
@@ -111,11 +114,11 @@ class DirectionController extends Controller
 
     private function resolveStatuses(Request $request): array
     {
-        return collect($request->input('statuts', ['SOUMIS', 'PREVALIDE', 'VALIDE', 'REJETE']))
+        return collect($request->input('statuts', ['PREVALIDE']))
             ->filter(fn ($status) => in_array($status, ['SOUMIS', 'PREVALIDE', 'VALIDE', 'REJETE'], true))->all();
     }
 
-    public function buildQuery(array $statuses, string $dateDebut, string $dateFin, string $intervenant = '', string $recherche = '', array $salles = []): \Illuminate\Database\Query\Builder
+    public function buildQuery(array $statuses, string $dateDebut, string $dateFin, string $intervenant = '', string $recherche = '', string $bloc = ''): \Illuminate\Database\Query\Builder
     {
         return DB::table('app.extra_declarations as d')
             ->leftJoin('app.vw_erp_actes_bloc_direction as a', 'd.num_intv', '=', 'a.NumIntv')
@@ -125,7 +128,7 @@ class DirectionController extends Controller
             ->when($statuses, fn ($q) => $q->whereIn('d.statut', $statuses))
             ->whereDate('a.DatOpe', '>=', $dateDebut)
             ->whereDate('a.DatOpe', '<=', $dateFin)
-            ->when($salles !== [], fn ($q) => $q->whereIn('a.DesignationSalle', $salles))
+            ->when($bloc !== '', fn ($q) => $q->where('a.CodBloc', $bloc))
             ->when($intervenant !== '', function ($q) use ($intervenant): void {
                 // Le champ "Intervenant" est rempli via une liste avec recherche
                 // (datalist) au format "CodInterv — Nom" ; si l'utilisateur a
@@ -169,20 +172,24 @@ class DirectionController extends Controller
                   AND CAST(a2.DatOpe AS date) = CAST(a.DatOpe AS date)
                   AND a2.HDAnest < a.HFAnest AND a2.HFAnest > a.HDAnest
             ) THEN 1 ELSE 0 END AS chevauchement")
-            // Doublon inter-dossier : même intervenant, même patient (via
-            // l'identifiant stable, indépendant du NumDoss) et même acte,
-            // déjà déclaré sur un AUTRE dossier — cas d'un acte transféré
-            // en sous-dossier par la facturation après la saisie initiale.
+            // Doublon inter-dossier : même intervenant, même patient et même
+            // acte déjà déclaré sur un AUTRE dossier — cas d'un acte
+            // transféré en sous-dossier par la facturation après la saisie
+            // initiale. Le rapprochement se fait par CinPatient (numéro de
+            // CIN, stable même quand la facturation crée un sous-dossier),
+            // avec IdentifiantPatient en repli si le CIN n'est pas renseigné.
             ->selectRaw("CASE WHEN EXISTS (
                 SELECT 1 FROM app.extra_declarations d3
                 INNER JOIN app.vw_erp_actes_bloc_direction a3 ON d3.num_intv = a3.NumIntv
                 WHERE d3.cod_interv = d.cod_interv
                   AND d3.id <> d.id
                   AND d3.statut <> 'REJETE'
-                  AND a3.IdentifiantPatient IS NOT NULL AND a.IdentifiantPatient IS NOT NULL
-                  AND a3.IdentifiantPatient = a.IdentifiantPatient
                   AND a3.CodeActe = a.CodeActe
                   AND a3.NumDoss <> a.NumDoss
+                  AND (
+                        (a.CinPatient IS NOT NULL AND a3.CinPatient = a.CinPatient)
+                     OR (a.CinPatient IS NULL AND a.IdentifiantPatient IS NOT NULL AND a3.IdentifiantPatient = a.IdentifiantPatient)
+                  )
             ) THEN 1 ELSE 0 END AS doublon_sous_dossier")
             // Regroupe par intervenant, puis trie chaque groupe par date et
             // heure d'acte : facilite le contrôle d'un même intervenant sur

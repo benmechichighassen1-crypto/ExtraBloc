@@ -36,9 +36,10 @@
                     </span>
                 </div>
                 <div class="filter-field">
-                    <label class="filter-label">Salle <span class="muted" style="text-transform:none;font-weight:400">(plusieurs choix : Ctrl+clic)</span></label>
-                    <select name="salles[]" multiple size="3" style="min-width:190px">
-                        @foreach($salleOptions as $salle)<option value="{{ $salle }}" @selected(in_array($salle, $salles, true))>{{ $salle }}</option>@endforeach
+                    <label class="filter-label">Bloc</label>
+                    <select name="bloc" style="min-width:180px">
+                        <option value="">Tous les blocs</option>
+                        @foreach($blocOptions as $opt)<option value="{{ $opt->CodBloc }}" @selected($bloc === $opt->CodBloc)>{{ $opt->LibBloc }}</option>@endforeach
                     </select>
                 </div>
             </div>
