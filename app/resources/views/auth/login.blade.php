@@ -1,6 +1,6 @@
 <x-layouts.app>
     <section class="card" style="max-width:430px;margin:12vh auto;background:rgba(255,255,255,.94)">
-        <h1>Extra Bloc</h1>
+        <h1>Plateforme Clinique</h1>
         <p class="muted">Connectez-vous avec votre compte ERP clinique.</p>
         @if(session('timeout')) <p class="notice" style="background:#fff0c7;color:#805900">{{ session('timeout') }}</p> @endif
         <form method="post" action="{{ route('login.store') }}">
