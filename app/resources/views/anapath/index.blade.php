@@ -15,12 +15,22 @@
         .anapath-filter input[type=date] { width: 132px; }
         .anapath-filter .field-retard select { width: 158px; }
         .anapath-filter .periode-dates { flex-wrap: nowrap; }
+        .stats-bar { display:grid; grid-template-columns:repeat(7,1fr); gap:14px; margin-top:20px; }
+        .stat-card { border-radius:10px; padding:14px 16px; color:#fff; min-width:0; box-shadow:0 3px 10px #1835501a }
+        .stat-card .stat-num { font-size:24px; font-weight:700; line-height:1.1; white-space:nowrap }
+        .stat-card .stat-label { font-size:11px; margin-top:3px; line-height:1.25; opacity:.92 }
+        .stat-navy { background:#1e3a5f }
+        .stat-gray { background:#eef2f6; color:#1c2d3b; box-shadow:none }
+        .stat-green { background:#0e9f6e }
+        .stat-red { background:#c0392b }
+        @media (max-width:1100px){ .stats-bar{ grid-template-columns:repeat(4,1fr) } }
+        @media (max-width:620px){ .stats-bar{ grid-template-columns:repeat(2,1fr) } }
     </style>
     <section class="card">
         <h1>Suivi Anapath</h1>
         <p class="muted">Suivi des demandes d'anatomopathologie — résultat, compte rendu (PJ) et paiement.</p>
 
-        <form method="get" class="filter-bar">
+        <form method="get" class="filter-bar" id="filter-form">
             <div class="filter-grid anapath-filter">
                 <div class="filter-field">
                     <label class="filter-label">Période (date de la demande)</label>
@@ -62,6 +72,7 @@
                     <select name="statut">
                         <option value="tous" @selected($statut === 'tous')>Tous</option>
                         <option value="attente" @selected($statut === 'attente')>En attente</option>
+                        <option value="retard" @selected($statut === 'retard')>En retard</option>
                         <option value="resultat" @selected($statut === 'resultat')>Résultat reçu</option>
                         <option value="annulee" @selected($statut === 'annulee')>Annulée</option>
                     </select>
@@ -86,9 +97,28 @@
             <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
                 <button class="primary">Filtrer</button>
                 <a class="button" href="{{ url('/anapath-suivi') }}">Réinitialiser</a>
-                <button class="success" name="export" value="1">Exporter Excel</button>
+                <button class="success" type="submit" form="filter-form" formaction="{{ url('/anapath-suivi/export') }}">Exporter Excel</button>
             </div>
         </form>
+    </section>
+
+    @php($stats = [
+        'total'    => $rows->count(),
+        'attente'  => $rows->where('statut', 'attente')->count(),
+        'resultat' => $rows->where('statut', 'resultat')->count(),
+        'retard'   => $rows->where('en_retard', true)->count(),
+        'labo'     => $rows->where('paiement_type', 'laboratoire')->count(),
+        'facture'  => $rows->where('paiement_type', 'facture')->count(),
+        'annulee'  => $rows->where('statut', 'annulee')->count(),
+    ])
+    <section class="stats-bar">
+        <div class="stat-card stat-navy"><div class="stat-num">{{ $stats['total'] }}</div><div class="stat-label">Total demandes (période)</div></div>
+        <div class="stat-card stat-gray"><div class="stat-num">{{ $stats['attente'] }}</div><div class="stat-label">En attente</div></div>
+        <div class="stat-card stat-gray"><div class="stat-num">{{ $stats['resultat'] }}</div><div class="stat-label">Résultats reçus</div></div>
+        <div class="stat-card stat-red"><div class="stat-num">{{ $stats['retard'] }}</div><div class="stat-label">En retard</div></div>
+        <div class="stat-card stat-gray"><div class="stat-num">{{ $stats['labo'] }}</div><div class="stat-label">Payé chez le laboratoire</div></div>
+        <div class="stat-card stat-green"><div class="stat-num">{{ $stats['facture'] }}</div><div class="stat-label">Inclus dans la facture patient</div></div>
+        <div class="stat-card stat-gray"><div class="stat-num">{{ $stats['annulee'] }}</div><div class="stat-label">Annulées</div></div>
     </section>
 
     @php($nbRetard = $rows->filter(fn ($r) => $r->en_retard)->count())

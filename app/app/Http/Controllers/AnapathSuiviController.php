@@ -46,7 +46,8 @@ class AnapathSuiviController extends Controller
             ->filter(function ($r) use ($statut, $statutResultat, $statutPaiement, $enRetard) {
                 if ($statut === 'annulee' && $r->annule_le === null) return false;
                 if ($statut === 'resultat' && ! $r->resultat_recu) return false;
-                if ($statut === 'attente' && $r->resultat_recu) return false;
+                if ($statut === 'attente' && ($r->resultat_recu || $r->annule_le !== null)) return false;
+                if ($statut === 'retard' && ! $r->en_retard) return false;
                 if ($statutResultat === 'avec' && ! $r->resultat_recu) return false;
                 if ($statutResultat === 'sans' && $r->resultat_recu) return false;
                 if ($statutPaiement === 'laboratoire' && $r->paiement_type !== 'laboratoire') return false;
@@ -210,9 +211,24 @@ class AnapathSuiviController extends Controller
         $dossier = trim((string) $request->input('dossier'));
         $medecin = trim((string) $request->input('medecin'));
         $laboratoire = (string) $request->input('laboratoire', '');
+        $statut = (string) $request->input('statut', 'tous');
+        $statutPaiement = $request->input('statut_paiement', 'tous');
+        $enRetard = $request->input('en_retard', 'tous');
 
         $rows = $this->buildQuery($dateDebut, $dateFin, $dossier, $medecin, $laboratoire)
-            ->get()->map(fn ($r) => $this->decorate($r));
+            ->get()->map(fn ($r) => $this->decorate($r))
+            ->filter(function ($r) use ($statut, $statutPaiement, $enRetard) {
+                if ($statut === 'annulee' && $r->annule_le === null) return false;
+                if ($statut === 'resultat' && ! $r->resultat_recu) return false;
+                if ($statut === 'attente' && ($r->resultat_recu || $r->annule_le !== null)) return false;
+                if ($statut === 'retard' && ! $r->en_retard) return false;
+                if ($statutPaiement === 'laboratoire' && $r->paiement_type !== 'laboratoire') return false;
+                if ($statutPaiement === 'facture' && $r->paiement_type !== 'facture') return false;
+                if ($statutPaiement === 'a_renseigner' && $r->paiement_type !== null) return false;
+                if ($enRetard === 'en_retard' && ! $r->en_retard) return false;
+                return true;
+            })
+            ->values();
 
         $rows = $this->attachPjs($rows);
 
@@ -264,10 +280,15 @@ class AnapathSuiviController extends Controller
 
     private function decorate($r)
     {
-        $r->en_retard = (bool) $r->resultat_recu === false
+        // « En retard » = pas encore de résultat reçu, non annulée, et la demande a
+        // atteint le délai attendu (DELAI_ATTENDU_JOURS) compté en jours entiers
+        // depuis la date de la demande. Exemple DELAI=1 : une demande créée hier ou
+        // avant est en retard ; créée aujourd'hui elle ne l'est pas encore.
+        $r->en_retard = ! $r->resultat_recu
             && $r->annule_le === null
             && $r->created_at
-            && now()->diffInDays(Carbon::parse($r->created_at)->startOfDay()) >= self::DELAI_ATTENDU_JOURS;
+            && Carbon::parse($r->created_at)->startOfDay()
+                ->lt(now()->startOfDay()->subDays(self::DELAI_ATTENDU_JOURS));
 
         if ($r->annule_le !== null) {
             $r->statut = 'annulee';
