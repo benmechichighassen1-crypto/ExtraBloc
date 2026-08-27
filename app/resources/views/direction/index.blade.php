@@ -158,8 +158,8 @@
                     @csrf @method('PATCH')
                     <label class="muted" style="display:block;font-size:11px;margin-bottom:3px">Montant</label>
                     <select name="montant" required style="width:100px">
-                        <option value="" disabled @selected($item->montant === null)>—</option>
-                        @foreach([100,150,200,250,300] as $m)<option value="{{ $m }}" @selected($item->montant === $m)>{{ $m }}</option>@endforeach
+                        <option value="" disabled @selected($item->montant === null || $item->montant === '')>—</option>
+                        @foreach([100,150,200,250,300] as $m)<option value="{{ $m }}" @selected((int) $item->montant === $m)>{{ $m }}</option>@endforeach
                     </select>
                 </form>
             @else
