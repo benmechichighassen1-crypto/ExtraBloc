@@ -8,6 +8,12 @@
         @if(!$canValidate)
             <p class="muted">Consultation en lecture seule des actes extra validés par la Direction, pour traitement de la paie.</p>
         @endif
+        @if($errors->any())
+            <div style="background:#fdecea;border:1px solid #f2b8b1;color:#a02818;padding:10px 14px;border-radius:8px;margin-bottom:14px">{{ $errors->first() }}</div>
+        @endif
+        @if(session('success'))
+            <div style="background:#e8f6ec;border:1px solid #b6e0c3;color:#1c6b36;padding:12px 14px;border-radius:8px;margin-bottom:14px">{{ session('success') }}</div>
+        @endif
         <form method="get" class="filter-bar">
             <div class="filter-grid">
                 <div class="filter-field">
@@ -63,7 +69,25 @@
         </form>
     </section>
 
+    <section class="card" style="display:flex;flex-wrap:wrap;gap:16px;padding:18px">
+        <div class="stat" style="background:var(--navy,#123454);color:#fff">
+            <div class="num">{{ $stats['total'] }}</div>
+            <div>Total demandes (période)</div>
+        </div>
+        <div class="stat"><div class="num">{{ $stats['enAttente'] }}</div><div>En attente</div></div>
+        <div class="stat"><div class="num">{{ $stats['prevalide'] }}</div><div>Prévalidées</div></div>
+        <div class="stat"><div class="num">{{ $stats['valide'] }}</div><div>Validées</div></div>
+        <div class="stat"><div class="num">{{ $stats['refusee'] }}</div><div>Refusées</div></div>
+        <div class="stat" style="background:#16846a;color:#fff">
+            <div class="num">{{ number_format($stats['montantTotal'], 0, ',', ' ') }}</div>
+            <div>Montant total (prévalidées + validées)</div>
+        </div>
+    </section>
+
     <style>
+        .stat { flex:1; min-width:130px; background:#eef4f9; border-radius:10px; padding:14px 16px }
+        .stat .num { font-size:26px; font-weight:700; line-height:1.1 }
+        .stat > div:last-child { font-size:12px; margin-top:4px; opacity:.85 }
         .filter-bar { display:flex; flex-direction:column; gap:18px }
         .filter-grid { display:flex; flex-wrap:wrap; gap:22px; align-items:flex-start }
         .filter-field { display:flex; flex-direction:column; gap:6px }
@@ -73,7 +97,7 @@
         .filter-actions { display:flex; flex-wrap:wrap; gap:10px; padding-top:6px; border-top:1px solid #e6edf2 }
         .clear-field-btn { position:absolute; right:2px; top:50%; transform:translateY(-50%); width:22px; height:22px; padding:0; border:0; background:transparent; color:#8a99a6; font-size:16px; line-height:1; cursor:pointer }
     </style>
-    <section class="card"><table><thead><tr><th>Intervenant / acte</th><th>Patient</th><th>Médecins</th><th>Date acte</th><th>Heure planification</th><th>Heure anesthésie</th><th>Heure emploi</th><th>Heure pointage</th><th>Saisie</th><th>Statut</th><th>Décision</th></tr></thead><tbody>
+    <section class="card"><table><thead><tr><th>Intervenant / acte</th><th>Patient</th><th>Médecins</th><th>Date acte</th><th>Heure planification</th><th>Heure anesthésie</th><th>Heure emploi</th><th>Heure pointage</th><th>Saisie</th><th>Statut</th><th>Montant</th><th>Décision</th></tr></thead><tbody>
     @forelse($declarations as $item)<tr>
         <td>
             <strong>{{ $item->DesInterv ?? $item->cod_interv }}</strong><br>
@@ -128,6 +152,24 @@
         </td>
         <td>{{ $item->declared_by_username }}<br><span class="muted">{{ \App\Support\Format::dateTime($item->declared_at) }}</span></td>
         <td><span class="badge status-{{ strtolower($item->statut) }}">{{ $statusLabels[$item->statut] ?? $item->statut }}</span></td>
+        <td>
+            @if($canValidate && in_array($item->statut, ['SOUMIS','PREVALIDE','VALIDE'], true))
+                <form method="post" action="{{ route('direction.declarations.montant', $item->id) }}" onchange="this.submit()" title="Choisir ou corriger le montant (enregistré automatiquement et journalisé)">
+                    @csrf @method('PATCH')
+                    <label class="muted" style="display:block;font-size:11px;margin-bottom:3px">Montant</label>
+                    <select name="montant" required style="width:100px">
+                        <option value="" disabled @selected($item->montant === null)>—</option>
+                        @foreach([100,150,200,250,300] as $m)<option value="{{ $m }}" @selected($item->montant === $m)>{{ $m }}</option>@endforeach
+                    </select>
+                </form>
+            @else
+                @if($item->montant)
+                    <span class="badge" style="background:#e8f6ec;color:#1c6b36">{{ $item->montant }}</span>
+                @else
+                    <span class="muted">—</span>
+                @endif
+            @endif
+        </td>
         <td style="text-align:right">
             @if($canValidate && in_array($item->statut, ['SOUMIS','PREVALIDE']))
                 @if($item->statut === 'PREVALIDE')
@@ -163,7 +205,7 @@
                 <button type="button" class="btn-outline" style="margin-top:8px" onclick="openAuditModal({{ $item->id }})">Traçabilité</button>
             @endif
         </td>
-    </tr>@empty <tr><td colspan="11">Aucune déclaration.</td></tr>@endforelse
+    </tr>@empty <tr><td colspan="12">Aucune déclaration.</td></tr>@endforelse
     </tbody></table><div style="margin-top:16px">{{ $declarations->links() }}</div></section>
 
     <div id="pointage-modal-overlay" class="modal-overlay">
@@ -183,8 +225,8 @@
         <div class="card" style="max-width:560px;width:92%;max-height:80vh;overflow:auto">
             <h2 style="margin-bottom:4px">Traçabilité de la déclaration</h2>
             <p class="muted" style="margin-top:0">Historique complet depuis la création, du plus ancien au plus récent.</p>
-            <table><thead><tr><th>Action</th><th>Utilisateur</th><th>Date</th><th>Motif</th></tr></thead>
-                <tbody id="audit-modal-body"><tr><td colspan="4" class="muted">Chargement…</td></tr></tbody>
+            <table><thead><tr><th>Action</th><th>Utilisateur</th><th>Date</th><th>Montant</th><th>Motif</th></tr></thead>
+                <tbody id="audit-modal-body"><tr><td colspan="5" class="muted">Chargement…</td></tr></tbody>
             </table>
             <div class="row" style="margin-top:16px;justify-content:flex-end">
                 <button type="button" onclick="closeModal('audit-modal-overlay')">Fermer</button>
@@ -240,11 +282,11 @@
                 .then(function (res) { return res.json(); })
                 .then(function (rows) {
                     if (!rows.length) {
-                        body.innerHTML = '<tr><td colspan="4" class="muted">Aucun historique.</td></tr>';
+                        body.innerHTML = '<tr><td colspan="5" class="muted">Aucun historique.</td></tr>';
                         return;
                     }
                     body.innerHTML = rows.map(function (r) {
-                        return '<tr><td>' + r.action + '</td><td>' + (r.acteur || '') + '</td><td>' + r.date + '</td><td>' + (r.motif || '') + '</td></tr>';
+                        return '<tr><td>' + r.action + '</td><td>' + (r.acteur || '') + '</td><td>' + r.date + '</td><td>' + (r.montant ? '→ ' + r.montant : '') + '</td><td>' + (r.motif || '') + '</td></tr>';
                     }).join('');
                 })
                 .catch(function () {

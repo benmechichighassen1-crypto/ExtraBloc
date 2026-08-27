@@ -23,6 +23,7 @@ class DirectionController extends Controller
         'VALIDE' => 'Validation',
         'REJETE' => 'Rejet',
         'DEVALIDE' => 'Dévalidation (correction)',
+        'MONTANT_CORRIGE' => 'Correction du montant',
     ];
 
     /** Libellés lisibles des statuts de déclaration (utilisés aussi dans la vue et l'export). */
@@ -57,8 +58,49 @@ class DirectionController extends Controller
         $intervenantOptions = $this->intervenantOptions();
         $blocOptions = $this->blocOptions();
         $prevalidationObligatoire = (bool) config('etrasbloc.prevalidation_obligatoire');
+        $stats = $this->statistiques($dateDebut, $dateFin, $intervenant, $recherche, $bloc);
 
-        return view('direction.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'intervenant', 'recherche', 'bloc', 'intervenantOptions', 'blocOptions', 'prevalidationObligatoire', 'canValidate'));
+        return view('direction.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'intervenant', 'recherche', 'bloc', 'intervenantOptions', 'blocOptions', 'prevalidationObligatoire', 'canValidate', 'stats'));
+    }
+
+    /**
+     * Récapitulatif de la période (mêmes filtres que la liste) : total des
+     * demandes et répartition par statut + somme des montants. Calculé sans
+     * le filtre de statut pour afficher la synthèse complète de la période.
+     */
+    private function statistiques(string $dateDebut, string $dateFin, string $intervenant, string $recherche, string $bloc): array
+    {
+        $q = DB::table('app.extra_declarations as d')
+            ->leftJoin('app.vw_erp_actes_bloc_direction as a', 'd.num_intv', '=', 'a.NumIntv')
+            ->leftJoin('app.vw_erp_acte_intervenants as i', function ($join): void {
+                $join->on('d.num_intv', '=', 'i.NumIntv')->on('d.cod_interv', '=', 'i.CodInterv');
+            })
+            ->whereDate('a.DatOpe', '>=', $dateDebut)
+            ->whereDate('a.DatOpe', '<=', $dateFin)
+            ->when($bloc !== '', fn ($q) => $q->where('a.CodBloc', $bloc))
+            ->when($intervenant !== '', function ($q) use ($intervenant): void {
+                if (preg_match('/^(\d+)/', $intervenant, $m)) {
+                    $q->where('d.cod_interv', (int) $m[1]);
+                } else {
+                    $q->where('i.DesInterv', 'like', '%'.$intervenant.'%');
+                }
+            })
+            ->when($recherche !== '', function ($q) use ($recherche): void {
+                $q->where(function ($sub) use ($recherche): void {
+                    $sub->where('d.num_doss', 'like', '%'.$recherche.'%')
+                        ->orWhere('a.NomPatient', 'like', '%'.$recherche.'%')
+                        ->orWhere('a.PrenomPatient', 'like', '%'.$recherche.'%');
+                });
+            });
+
+        return [
+            'total'      => (clone $q)->count(),
+            'enAttente'  => (clone $q)->where('d.statut', 'SOUMIS')->count(),
+            'prevalide'  => (clone $q)->where('d.statut', 'PREVALIDE')->count(),
+            'valide'     => (clone $q)->where('d.statut', 'VALIDE')->count(),
+            'refusee'    => (clone $q)->where('d.statut', 'REJETE')->count(),
+            'montantTotal' => (clone $q)->whereIn('d.statut', ['PREVALIDE', 'VALIDE'])->whereNotNull('d.montant')->sum('d.montant'),
+        ];
     }
 
     /**
@@ -212,6 +254,13 @@ class DirectionController extends Controller
             abort_unless($item, 404);
             abort_if(! in_array($item->statut, ['SOUMIS', 'PREVALIDE'], true), 422, 'Cette déclaration est déjà traitée.');
 
+            // Certains services n'attendent pas la pré-validation du major :
+            // la direction valide directement. Dans ce cas le montant doit
+            // être renseigné (via la colonne « Montant ») avant la validation.
+            if ($data['decision'] === 'VALIDE' && $item->montant === null) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['montant' => 'Veuillez renseigner ce champ.']);
+            }
+
             if ($data['decision'] === 'VALIDE' && config('etrasbloc.prevalidation_obligatoire') && $item->statut !== 'PREVALIDE') {
                 abort(422, 'La pré-validation par le major du bloc est obligatoire avant la validation finale.');
             }
@@ -232,6 +281,37 @@ class DirectionController extends Controller
         });
 
         return back()->with('success', 'Décision enregistrée et journalisée.');
+    }
+
+    /**
+     * Corrige le montant d'une déclaration (action réservée à la direction).
+     * Le montant est obligatoire et la correction est journalisée dans
+     * app.extra_declaration_audits (action "MONTANT_CORRIGE").
+     */
+    public function updateMontant(Request $request, int $declaration): RedirectResponse
+    {
+        abort_unless(AccessControl::hasDirectionAccess($request->user()->getAuthIdentifier()), 403, 'Accès en lecture seule : la correction du montant est réservée à la direction.');
+
+        $data = $request->validate([
+            'montant' => ['required', 'integer', 'in:100,150,200,250,300'],
+            'motif'   => ['nullable', 'string', 'max:500'],
+        ]);
+
+        DB::transaction(function () use ($declaration, $data, $request): void {
+            $item = DB::table('app.extra_declarations')->where('id', $declaration)->lockForUpdate()->first();
+            abort_unless($item, 404);
+
+            DB::table('app.extra_declarations')->where('id', $declaration)->update(['montant' => $data['montant']]);
+            DB::table('app.extra_declaration_audits')->insert([
+                'declaration_id'  => $declaration,
+                'action'          => 'MONTANT_CORRIGE',
+                'acteur_username' => $request->user()->getAuthIdentifier(),
+                'donnees_avant'   => json_encode(['montant' => $item->montant]),
+                'donnees_apres'   => json_encode(['montant' => $data['montant'], 'motif' => $data['motif']]),
+            ]);
+        });
+
+        return back()->with('success', 'Montant corrigé et journalisé.');
     }
 
     /**
@@ -299,6 +379,7 @@ class DirectionController extends Controller
                     'acteur' => $row->acteur_username,
                     'date' => Carbon::parse($row->created_at)->format('d/m/Y H:i:s'),
                     'motif' => $apres['motif'] ?? $apres['observation'] ?? null,
+                    'montant' => $apres['montant'] ?? null,
                 ];
             })->values()
         );

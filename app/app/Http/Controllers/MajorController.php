@@ -51,7 +51,8 @@ class MajorController extends Controller
     {
         $data = $request->validate([
             'decision' => ['required', 'in:PREVALIDE,REJETE'],
-            'motif' => [$request->input('decision') === 'REJETE' ? 'required' : 'nullable', 'string', 'max:500'],
+            'montant'  => [$request->input('decision') === 'PREVALIDE' ? 'required' : 'nullable', 'integer', 'in:100,150,200,250,300'],
+            'motif'    => [$request->input('decision') === 'REJETE' ? 'required' : 'nullable', 'string', 'max:500'],
         ]);
 
         DB::transaction(function () use ($declaration, $data, $request): void {
@@ -67,6 +68,7 @@ class MajorController extends Controller
                     'prevalide_par_username' => $username,
                     'prevalide_le' => now(),
                     'prevalidation_auto' => 0,
+                    'montant' => $data['montant'],
                     'motif_prevalidation' => $data['motif'],
                 ]);
             } else {
@@ -83,7 +85,7 @@ class MajorController extends Controller
                 'action' => $data['decision'],
                 'acteur_username' => $username,
                 'donnees_avant' => json_encode(['statut' => $item->statut]),
-                'donnees_apres' => json_encode(['statut' => $data['decision'], 'motif' => $data['motif']]),
+                'donnees_apres' => json_encode(['statut' => $data['decision'], 'montant' => $data['montant'] ?? null, 'motif' => $data['motif']]),
             ]);
         });
 

@@ -6,6 +6,17 @@
     <section class="card">
         <h1>Pré-validation (major du bloc)</h1>
         <p class="muted">Vérifiez les déclarations « En attente » avant transmission à la Direction pour validation finale.</p>
+        @if($errors->any())
+            <div style="background:#fdecea;border:1px solid #f2b8b1;color:#a02818;padding:12px 14px;border-radius:8px;margin-bottom:14px">
+                <strong>Le montant est requis pour prévalider.</strong>
+                <ul style="margin:6px 0 0;padding-left:18px">
+                    @foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach
+                </ul>
+            </div>
+        @endif
+        @if(session('success'))
+            <div style="background:#e8f6ec;border:1px solid #b6e0c3;color:#1c6b36;padding:12px 14px;border-radius:8px;margin-bottom:14px">{{ session('success') }}</div>
+        @endif
         <form method="get" class="filter-bar">
             <div class="filter-grid">
                 <div class="filter-field">
@@ -119,13 +130,18 @@
         <td style="text-align:right">
             @if($item->statut === 'SOUMIS')
                 <form method="post" action="{{ route('major.declarations.decide', $item->id) }}" class="row" style="justify-content:flex-end;flex-wrap:nowrap">@csrf @method('PATCH')
+                    <select name="montant" required onchange="this.required = (document.activeElement && document.activeElement.value==='PREVALIDE')">
+                        <option value="">Montant…</option>
+                        @foreach([100,150,200,250,300] as $m)<option value="{{ $m }}">{{ $m }}</option>@endforeach
+                    </select>
                     <input name="motif" placeholder="Motif (obligatoire si refus)" style="min-width:150px">
-                    <button class="success" name="decision" value="PREVALIDE" onclick="this.form.querySelector('[name=motif]').required=false">Prévalider</button>
-                    <button class="danger" name="decision" value="REJETE" onclick="this.form.querySelector('[name=motif]').required=true">Refuser</button>
+                    <button class="success" name="decision" value="PREVALIDE" onclick="this.form.querySelector('[name=motif]').required=false;this.form.querySelector('[name=montant]').required=true">Prévalider</button>
+                    <button class="danger" name="decision" value="REJETE" onclick="this.form.querySelector('[name=motif]').required=true;this.form.querySelector('[name=montant]').required=false">Refuser</button>
                 </form>
             @elseif($item->statut === 'PREVALIDE')
                 <div style="text-align:left"><strong>{{ $item->prevalide_par_username }}</strong><br>
                 <span class="muted">{{ \App\Support\Format::dateTime($item->prevalide_le) }}</span>
+                @if($item->montant)<br><span class="badge" style="background:#e8f6ec;color:#1c6b36">Montant : {{ $item->montant }}</span>@endif
                 @if($item->motif_prevalidation)<br><span class="muted">Motif : {{ $item->motif_prevalidation }}</span>@endif
                 <br><span class="muted">Transmis à la Direction.</span></div>
             @else

@@ -133,13 +133,19 @@ class RegistryController extends Controller
         $fromDate = Carbon::parse($from)->startOfDay();
         $toDate = Carbon::parse($to)->addDay()->startOfDay();
 
-        return DB::table('app.vw_registre_bloc_radiologies')
-            ->whereIn('NumDoss', $actes->pluck('NumDoss')->unique()->all())
-            ->whereRaw('DateValidation >= CONVERT(datetime, ?, 112)', [$fromDate->format('Ymd')])
-            ->whereRaw('DateValidation < CONVERT(datetime, ?, 112)', [$toDate->format('Ymd')])
-            ->orderByDesc('DateValidation')
-            ->get()
-            ->groupBy('NumDoss');
+        // Par sécurité, on découpe aussi sur NumDoss pour éviter l'erreur 2100 paramètres.
+        $rows = collect();
+        foreach ($actes->pluck('NumDoss')->unique()->chunk(1000) as $lot) {
+            $rows = $rows->merge(
+                DB::table('app.vw_registre_bloc_radiologies')
+                    ->whereIn('NumDoss', $lot->all())
+                    ->whereRaw('DateValidation >= CONVERT(datetime, ?, 112)', [$fromDate->format('Ymd')])
+                    ->whereRaw('DateValidation < CONVERT(datetime, ?, 112)', [$toDate->format('Ymd')])
+                    ->get()
+            );
+        }
+
+        return $rows->sortByDesc('DateValidation')->values()->groupBy('NumDoss');
     }
 
     /**
@@ -152,11 +158,62 @@ class RegistryController extends Controller
             return collect();
         }
 
+        // Traitement par lots pour rester sous la limite SQL Server de 2100 paramètres
+        // (des plages de dates larges produisaient une erreur "The incoming request has
+        // too many parameters"). Le découpage par couple (NumIntv, NumDoss) ne change
+        // rien au regroupement final et n'alourdit pas l'ERP (lecture seule).
+        $paires = $actes->map(fn ($a) => ['NumIntv' => $a->NumIntv, 'NumDoss' => $a->NumDoss])
+            ->unique(fn ($p) => $p['NumIntv'].':'.$p['NumDoss'])
+            ->values();
+
+        // Limite SQL Server : 2100 paramètres par requête. Les deux IN
+        // (NumIntv + NumDoss) comptent chacun leurs valeurs, donc on découpe
+        // par budget : tant que NbNumIntv + NbNumDoss reste ≤ 800, on est
+        // largement sous la limite, quelle que soit l'ampleur de la période.
+        $MAX_PARAMS = 800;
+        $rows = collect();
+        $lotIntvs = [];
+        $lotDoss = [];
+
+        foreach ($paires as $p) {
+            $nIntv = $lotIntvs;
+            $nDoss = $lotDoss;
+            if (! in_array($p['NumIntv'], $nIntv, true)) {
+                $nIntv[] = $p['NumIntv'];
+            }
+            if (! in_array($p['NumDoss'], $nDoss, true)) {
+                $nDoss[] = $p['NumDoss'];
+            }
+
+            // Ajouter cette paire ferait dépasser le budget : on exécute le lot courant.
+            if (! empty($lotIntvs) && (count($nIntv) + count($nDoss) > $MAX_PARAMS)) {
+                $rows = $rows->merge($this->fetchIntervenants($lotIntvs, $lotDoss));
+                $lotIntvs = [$p['NumIntv']];
+                $lotDoss = [$p['NumDoss']];
+                continue;
+            }
+
+            $lotIntvs = $nIntv;
+            $lotDoss = $nDoss;
+        }
+
+        if (! empty($lotIntvs)) {
+            $rows = $rows->merge($this->fetchIntervenants($lotIntvs, $lotDoss));
+        }
+
+        return $rows->groupBy(fn ($i) => $i->NumIntv.':'.$i->NumDoss);
+    }
+
+    /**
+     * Intervenants d'un lot de la paire (NumIntv, NumDoss), sous la limite
+     * de paramètres SQL Server.
+     */
+    private function fetchIntervenants(array $intvs, array $doss)
+    {
         return DB::table('app.vw_erp_acte_intervenants')
-            ->whereIn('NumIntv', $actes->pluck('NumIntv')->unique()->all())
-            ->whereIn('NumDoss', $actes->pluck('NumDoss')->unique()->all())
+            ->whereIn('NumIntv', $intvs)
+            ->whereIn('NumDoss', $doss)
             ->orderBy('RoleIntervenant')
-            ->get()
-            ->groupBy(fn ($i) => $i->NumIntv.':'.$i->NumDoss);
+            ->get();
     }
 }

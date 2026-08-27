@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ request()->routeIs('registry.*') ? 'Registre Bloc' : 'Extra Bloc' }}</title>
+    <title>{{ request()->routeIs('registry.*', 'anapath-suivi*') ? 'Registre Bloc' : 'Extra Bloc' }}</title>
     <style>
         :root { --navy:#123454; --blue:#1779ba; --bg:#f3f7fa; --green:#16846a; --red:#b33a3a; }
         * { box-sizing:border-box } body { margin:0; background:var(--bg); color:#1c2d3b; font:15px Arial,sans-serif; }
@@ -38,7 +38,7 @@
     $loginBackgroundStyle = request()->routeIs('login')
         ? "background-image:url('".asset('images/arrierplan.jpeg')."');background-size:cover;background-position:center;background-attachment:fixed;min-height:100vh"
         : '';
-    $isRegistre = request()->routeIs('registry.*');
+    $isRegistre = request()->routeIs('registry.*', 'anapath-suivi*');
     $isAccueil = request()->routeIs('home');
 @endphp
 <body style="{{ $loginBackgroundStyle }}">
@@ -49,6 +49,8 @@
         {{-- Page d'accueil : navbar minimale, pas de liens applicatifs. --}}
     @elseif($isRegistre)
         <a href="{{ route('home') }}" class="nav-home-btn">🏠 Accueil</a>
+        <a href="{{ route('registry.index') }}">Registre de bloc</a>
+        <a href="{{ route('anapath-suivi') }}">Suivi Anapath</a>
     @else
         <a href="{{ route('home') }}" class="nav-home-btn">🏠 Accueil</a>
         <a href="{{ route('technician.index') }}">Saisie intervenant</a>
