@@ -70,36 +70,20 @@ class DirectionController extends Controller
      */
     private function statistiques(string $dateDebut, string $dateFin, string $intervenant, string $recherche, string $bloc): array
     {
-        $q = DB::table('app.extra_declarations as d')
-            ->leftJoin('app.vw_erp_actes_bloc_direction as a', 'd.num_intv', '=', 'a.NumIntv')
-            ->leftJoin('app.vw_erp_acte_intervenants as i', function ($join): void {
-                $join->on('d.num_intv', '=', 'i.NumIntv')->on('d.cod_interv', '=', 'i.CodInterv');
-            })
-            ->whereDate('a.DatOpe', '>=', $dateDebut)
-            ->whereDate('a.DatOpe', '<=', $dateFin)
-            ->when($bloc !== '', fn ($q) => $q->where('a.CodBloc', $bloc))
-            ->when($intervenant !== '', function ($q) use ($intervenant): void {
-                if (preg_match('/^(\d+)/', $intervenant, $m)) {
-                    $q->where('d.cod_interv', (int) $m[1]);
-                } else {
-                    $q->where('i.DesInterv', 'like', '%'.$intervenant.'%');
-                }
-            })
-            ->when($recherche !== '', function ($q) use ($recherche): void {
-                $q->where(function ($sub) use ($recherche): void {
-                    $sub->where('d.num_doss', 'like', '%'.$recherche.'%')
-                        ->orWhere('a.NomPatient', 'like', '%'.$recherche.'%')
-                        ->orWhere('a.PrenomPatient', 'like', '%'.$recherche.'%');
-                });
-            });
+        // Même dé-duplication que la liste : une seule déclaration retenue par
+        // (dossier, intervenant, acte, jour) — celle au statut le plus avancé,
+        // puis la plus récente. Sans ça, un acte modifié dans l'ERP qui a créé
+        // deux déclarations gonflait les compteurs de la barre de statistiques.
+        $inner = $this->declarationsInner($dateDebut, $dateFin, $intervenant, $recherche, $bloc, []);
+        $q = DB::query()->fromSub($inner, 't')->where('t.rn', 1);
 
         return [
             'total'      => (clone $q)->count(),
-            'enAttente'  => (clone $q)->where('d.statut', 'SOUMIS')->count(),
-            'prevalide'  => (clone $q)->where('d.statut', 'PREVALIDE')->count(),
-            'valide'     => (clone $q)->where('d.statut', 'VALIDE')->count(),
-            'refusee'    => (clone $q)->where('d.statut', 'REJETE')->count(),
-            'montantTotal' => (clone $q)->whereIn('d.statut', ['PREVALIDE', 'VALIDE'])->whereNotNull('d.montant')->sum('d.montant'),
+            'enAttente'  => (clone $q)->where('t.statut', 'SOUMIS')->count(),
+            'prevalide'  => (clone $q)->where('t.statut', 'PREVALIDE')->count(),
+            'valide'     => (clone $q)->where('t.statut', 'VALIDE')->count(),
+            'refusee'    => (clone $q)->where('t.statut', 'REJETE')->count(),
+            'montantTotal' => (clone $q)->whereIn('t.statut', ['PREVALIDE', 'VALIDE'])->whereNotNull('t.montant')->sum('t.montant'),
         ];
     }
 
@@ -160,12 +144,45 @@ class DirectionController extends Controller
             ->filter(fn ($status) => in_array($status, ['SOUMIS', 'PREVALIDE', 'VALIDE', 'REJETE'], true))->all();
     }
 
-    public function buildQuery(array $statuses, string $dateDebut, string $dateFin, string $intervenant = '', string $recherche = '', string $bloc = ''): \Illuminate\Database\Query\Builder
+    /**
+     * Requête interne des déclarations (avec toutes les jointures, filtres et
+     * la colonne "rn" de dé-duplication). Une seule ligne est retenue par
+     * (dossier, intervenant, acte, jour) — la clé d'un doublon réel :
+     *
+     *   un acte modifié dans l'ERP (numéro d'intervention changé, sous-dossier
+     *   créé par la facturation, etc.) produit parfois DEUX déclarations pour
+     *   le même intervenant + même patient + même acte + même jour, avec des
+     *   heures de pointage différentes. On garde la déclaration au statut le
+     *   plus avancé (Validé > Prévalidé > En attente > Refusé), puis la plus
+     *   récente.
+     *
+     * À la consultation, les colonnes sélectionnées sont dédupliquées par la
+     * colonne "rn" (= 1 pour la ligne conservée).
+     */
+    private function declarationsInner(string $dateDebut, string $dateFin, string $intervenant, string $recherche, string $bloc, array $statuses): \Illuminate\Database\Query\Builder
     {
         return DB::table('app.extra_declarations as d')
             ->leftJoin('app.vw_erp_actes_bloc_direction as a', 'd.num_intv', '=', 'a.NumIntv')
-            ->leftJoin('app.vw_erp_acte_intervenants as i', function ($join): void {
-                $join->on('d.num_intv', '=', 'i.NumIntv')->on('d.cod_interv', '=', 'i.CodInterv');
+            // La vue des intervenants peut renvoyer PLUSIEURS lignes pour un
+            // même (NumIntv, CodInterv) — par ex. un pointage parasite daté
+            // d'une autre année/mois/jour que l'acte. Jointure directe = chaque
+            // déclaration apparaissait en DOUBLE à l'écran Direction. On ne
+            // garde donc qu'UNE ligne par (NumIntv, CodInterv) : celle dont la
+            // date de pointage est la PLUS PROCHE de la date de l'acte (le bon
+            // pointage, quelle que soit l'année).
+            ->leftJoin(DB::raw("(
+                SELECT i.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY i.NumIntv, i.CodInterv
+                           ORDER BY ISNULL(ABS(DATEDIFF(day, i.HeurePointageEntree, a.DatOpe)), 999999) ASC,
+                                    i.HeurePointageEntree DESC
+                       ) AS i_rn
+                FROM app.vw_erp_acte_intervenants i
+                LEFT JOIN app.vw_erp_actes_bloc_direction a ON i.NumIntv = a.NumIntv
+            ) AS i"), function ($join): void {
+                $join->on('d.num_intv', '=', 'i.NumIntv')
+                    ->on('d.cod_interv', '=', 'i.CodInterv')
+                    ->on('i.i_rn', '=', DB::raw('1'));
             })
             ->when($statuses, fn ($q) => $q->whereIn('d.statut', $statuses))
             ->whereDate('a.DatOpe', '>=', $dateDebut)
@@ -233,11 +250,28 @@ class DirectionController extends Controller
                      OR (a.CinPatient IS NULL AND a.IdentifiantPatient IS NOT NULL AND a3.IdentifiantPatient = a.IdentifiantPatient)
                   )
             ) THEN 1 ELSE 0 END AS doublon_sous_dossier")
-            // Regroupe par intervenant, puis trie chaque groupe par date et
-            // heure d'acte : facilite le contrôle d'un même intervenant sur
-            // plusieurs jours/actes d'affilée (demande Direction).
-            ->orderBy('i.DesInterv')
-            ->orderBy('a.DatOpe');
+            // Dé-duplication : on classe les doublons (même dossier + même
+            // intervenant + même acte + même jour) et on ne conserve que la
+            // ligne "rn = 1".
+            ->selectRaw("ROW_NUMBER() OVER (
+                PARTITION BY d.num_doss, d.cod_interv, a.CodeActe, CONVERT(date, a.DatOpe)
+                ORDER BY CASE d.statut WHEN 'VALIDE' THEN 0 WHEN 'PREVALIDE' THEN 1 WHEN 'SOUMIS' THEN 2 ELSE 3 END,
+                         d.declared_at DESC, d.id DESC
+            ) AS rn");
+    }
+
+    public function buildQuery(array $statuses, string $dateDebut, string $dateFin, string $intervenant = '', string $recherche = '', string $bloc = ''): \Illuminate\Database\Query\Builder
+    {
+        $inner = $this->declarationsInner($dateDebut, $dateFin, $intervenant, $recherche, $bloc, $statuses);
+
+        // Ne garde qu'une ligne par doublon, puis trie par intervenant et
+        // date d'acte (facilite le contrôle d'un même intervenant sur
+        // plusieurs jours/actes d'affilée).
+        return DB::query()
+            ->fromSub($inner, 't')
+            ->where('t.rn', 1)
+            ->orderBy('t.DesInterv')
+            ->orderBy('t.DatOpe');
     }
 
     public function decide(Request $request, int $declaration): RedirectResponse
