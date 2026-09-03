@@ -36,6 +36,12 @@ class DirectionController extends Controller
 
     public function index(Request $request): View
     {
+        // Filet de sécurité uniquement : la vraie correction est la
+        // restriction de declarationsBase() ci-dessous. Sans elle, ceci ne
+        // suffit pas car IIS coupe la requête FastCGI de son côté
+        // (voir "Activity Timeout" dans IIS Manager > FastCGI Settings).
+        set_time_limit(120);
+
         $username = $request->user()->getAuthIdentifier();
         $canValidate = AccessControl::hasDirectionAccess($username);
 
@@ -74,16 +80,33 @@ class DirectionController extends Controller
         // (dossier, intervenant, acte, jour) — celle au statut le plus avancé,
         // puis la plus récente. Sans ça, un acte modifié dans l'ERP qui a créé
         // deux déclarations gonflait les compteurs de la barre de statistiques.
-        $inner = $this->declarationsInner($dateDebut, $dateFin, $intervenant, $recherche, $bloc, []);
-        $q = DB::query()->fromSub($inner, 't')->where('t.rn', 1);
+        //
+        // IMPORTANT : on utilise declarationsBase() (SANS les colonnes
+        // "chevauchement"/"doublon_sous_dossier") et UNE SEULE requête
+        // groupée, au lieu de 5 requêtes qui recalculaient chacune les deux
+        // EXISTS corrélés pour rien (ces colonnes ne servent qu'à l'affichage
+        // de la liste, jamais aux compteurs).
+        $inner = $this->declarationsBase($dateDebut, $dateFin, $intervenant, $recherche, $bloc, []);
+
+        $row = (array) DB::query()->fromSub($inner, 't')
+            ->where('t.rn', 1)
+            ->selectRaw("
+                COUNT(*) AS total,
+                SUM(CASE WHEN t.statut = 'SOUMIS' THEN 1 ELSE 0 END) AS enAttente,
+                SUM(CASE WHEN t.statut = 'PREVALIDE' THEN 1 ELSE 0 END) AS prevalide,
+                SUM(CASE WHEN t.statut = 'VALIDE' THEN 1 ELSE 0 END) AS valide,
+                SUM(CASE WHEN t.statut = 'REJETE' THEN 1 ELSE 0 END) AS refusee,
+                SUM(CASE WHEN t.statut IN ('PREVALIDE', 'VALIDE') AND t.montant IS NOT NULL THEN t.montant ELSE 0 END) AS montantTotal
+            ")
+            ->first();
 
         return [
-            'total'      => (clone $q)->count(),
-            'enAttente'  => (clone $q)->where('t.statut', 'SOUMIS')->count(),
-            'prevalide'  => (clone $q)->where('t.statut', 'PREVALIDE')->count(),
-            'valide'     => (clone $q)->where('t.statut', 'VALIDE')->count(),
-            'refusee'    => (clone $q)->where('t.statut', 'REJETE')->count(),
-            'montantTotal' => (clone $q)->whereIn('t.statut', ['PREVALIDE', 'VALIDE'])->whereNotNull('t.montant')->sum('t.montant'),
+            'total'        => (int) ($row['total'] ?? 0),
+            'enAttente'    => (int) ($row['enAttente'] ?? 0),
+            'prevalide'    => (int) ($row['prevalide'] ?? 0),
+            'valide'       => (int) ($row['valide'] ?? 0),
+            'refusee'      => (int) ($row['refusee'] ?? 0),
+            'montantTotal' => $row['montantTotal'] ?? 0,
         ];
     }
 
@@ -145,9 +168,22 @@ class DirectionController extends Controller
     }
 
     /**
-     * Requête interne des déclarations (avec toutes les jointures, filtres et
-     * la colonne "rn" de dé-duplication). Une seule ligne est retenue par
-     * (dossier, intervenant, acte, jour) — la clé d'un doublon réel :
+     * Requête de base des déclarations (jointures + filtres + colonne "rn"
+     * de dé-duplication), SANS les colonnes "chevauchement"/"doublon_sous_dossier".
+     *
+     * CORRECTIF PERF (bug de timeout sur /direction) : la sous-requête "i"
+     * ci-dessous joignait TOUT app.vw_erp_acte_intervenants à TOUT
+     * app.vw_erp_actes_bloc_direction, sans aucun filtre — soit tout
+     * l'historique ERP depuis toujours, recalculé à chaque chargement de
+     * la page, via le serveur lié ERP_LINK. C'était la requête à ~11-13s
+     * relancée 5 fois par page (cf. le trace d'erreur "Maximum execution
+     * time of 60 seconds exceeded"). On la restreint maintenant aux
+     * NumIntv qui ont RÉELLEMENT une déclaration dans app.extra_declarations
+     * (univers bien plus petit que tout l'historique ERP, et c'est de
+     * toute façon le seul univers qui compte pour cet écran).
+     *
+     * Une seule ligne est retenue par (dossier, intervenant, acte, jour) —
+     * la clé d'un doublon réel :
      *
      *   un acte modifié dans l'ERP (numéro d'intervention changé, sous-dossier
      *   créé par la facturation, etc.) produit parfois DEUX déclarations pour
@@ -159,27 +195,29 @@ class DirectionController extends Controller
      * À la consultation, les colonnes sélectionnées sont dédupliquées par la
      * colonne "rn" (= 1 pour la ligne conservée).
      */
-    private function declarationsInner(string $dateDebut, string $dateFin, string $intervenant, string $recherche, string $bloc, array $statuses): \Illuminate\Database\Query\Builder
+    private function declarationsBase(string $dateDebut, string $dateFin, string $intervenant, string $recherche, string $bloc, array $statuses): \Illuminate\Database\Query\Builder
     {
+        // La vue des intervenants peut renvoyer PLUSIEURS lignes pour un
+        // même (NumIntv, CodInterv) — par ex. un pointage parasite daté
+        // d'une autre année/mois/jour que l'acte. Jointure directe = chaque
+        // déclaration apparaissait en DOUBLE à l'écran Direction. On ne
+        // garde donc qu'UNE ligne par (NumIntv, CodInterv) : celle dont la
+        // date de pointage est la PLUS PROCHE de la date de l'acte (le bon
+        // pointage, quelle que soit l'année).
+        $acteIntervenants = DB::table('app.vw_erp_acte_intervenants as i')
+            ->leftJoin('app.vw_erp_actes_bloc_direction as a', 'i.NumIntv', '=', 'a.NumIntv')
+            ->whereIn('i.NumIntv', function ($q): void {
+                $q->select('num_intv')->from('app.extra_declarations');
+            })
+            ->selectRaw("i.*, ROW_NUMBER() OVER (
+                PARTITION BY i.NumIntv, i.CodInterv
+                ORDER BY ISNULL(ABS(DATEDIFF(day, i.HeurePointageEntree, a.DatOpe)), 999999) ASC,
+                         i.HeurePointageEntree DESC
+            ) AS i_rn");
+
         return DB::table('app.extra_declarations as d')
             ->leftJoin('app.vw_erp_actes_bloc_direction as a', 'd.num_intv', '=', 'a.NumIntv')
-            // La vue des intervenants peut renvoyer PLUSIEURS lignes pour un
-            // même (NumIntv, CodInterv) — par ex. un pointage parasite daté
-            // d'une autre année/mois/jour que l'acte. Jointure directe = chaque
-            // déclaration apparaissait en DOUBLE à l'écran Direction. On ne
-            // garde donc qu'UNE ligne par (NumIntv, CodInterv) : celle dont la
-            // date de pointage est la PLUS PROCHE de la date de l'acte (le bon
-            // pointage, quelle que soit l'année).
-            ->leftJoin(DB::raw("(
-                SELECT i.*,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY i.NumIntv, i.CodInterv
-                           ORDER BY ISNULL(ABS(DATEDIFF(day, i.HeurePointageEntree, a.DatOpe)), 999999) ASC,
-                                    i.HeurePointageEntree DESC
-                       ) AS i_rn
-                FROM app.vw_erp_acte_intervenants i
-                LEFT JOIN app.vw_erp_actes_bloc_direction a ON i.NumIntv = a.NumIntv
-            ) AS i"), function ($join): void {
+            ->leftJoinSub($acteIntervenants, 'i', function ($join): void {
                 $join->on('d.num_intv', '=', 'i.NumIntv')
                     ->on('d.cod_interv', '=', 'i.CodInterv')
                     ->on('i.i_rn', '=', DB::raw('1'));
@@ -215,6 +253,25 @@ class DirectionController extends Controller
                 'i.HeureEmploiDebut1', 'i.HeureEmploiFin1', 'i.HeureEmploiDebut2', 'i.HeureEmploiFin2', 'i.Repos',
                 'i.HeurePointageEntree', 'i.HeurePointageSortie'
             )
+            // Dé-duplication : on classe les doublons (même dossier + même
+            // intervenant + même acte + même jour) et on ne conserve que la
+            // ligne "rn = 1".
+            ->selectRaw("ROW_NUMBER() OVER (
+                PARTITION BY d.num_doss, d.cod_interv, a.CodeActe, CONVERT(date, a.DatOpe)
+                ORDER BY CASE d.statut WHEN 'VALIDE' THEN 0 WHEN 'PREVALIDE' THEN 1 WHEN 'SOUMIS' THEN 2 ELSE 3 END,
+                         d.declared_at DESC, d.id DESC
+            ) AS rn");
+    }
+
+    /**
+     * declarationsBase() + les deux colonnes "badges" (chevauchement /
+     * doublon_sous_dossier). Ces deux EXISTS corrélés sont coûteux —
+     * utilisés UNIQUEMENT pour l'affichage de la liste (buildQuery), jamais
+     * pour les compteurs (statistiques), qui n'en ont pas besoin.
+     */
+    private function declarationsInner(string $dateDebut, string $dateFin, string $intervenant, string $recherche, string $bloc, array $statuses): \Illuminate\Database\Query\Builder
+    {
+        return $this->declarationsBase($dateDebut, $dateFin, $intervenant, $recherche, $bloc, $statuses)
             // Détecte une AUTRE déclaration du même intervenant, le même
             // jour, dont la plage horaire de planification chevauche celle
             // de cette ligne (hors déclarations déjà refusées) — pour
@@ -249,15 +306,7 @@ class DirectionController extends Controller
                         (a.CinPatient IS NOT NULL AND a3.CinPatient = a.CinPatient)
                      OR (a.CinPatient IS NULL AND a.IdentifiantPatient IS NOT NULL AND a3.IdentifiantPatient = a.IdentifiantPatient)
                   )
-            ) THEN 1 ELSE 0 END AS doublon_sous_dossier")
-            // Dé-duplication : on classe les doublons (même dossier + même
-            // intervenant + même acte + même jour) et on ne conserve que la
-            // ligne "rn = 1".
-            ->selectRaw("ROW_NUMBER() OVER (
-                PARTITION BY d.num_doss, d.cod_interv, a.CodeActe, CONVERT(date, a.DatOpe)
-                ORDER BY CASE d.statut WHEN 'VALIDE' THEN 0 WHEN 'PREVALIDE' THEN 1 WHEN 'SOUMIS' THEN 2 ELSE 3 END,
-                         d.declared_at DESC, d.id DESC
-            ) AS rn");
+            ) THEN 1 ELSE 0 END AS doublon_sous_dossier");
     }
 
     public function buildQuery(array $statuses, string $dateDebut, string $dateFin, string $intervenant = '', string $recherche = '', string $bloc = ''): \Illuminate\Database\Query\Builder
