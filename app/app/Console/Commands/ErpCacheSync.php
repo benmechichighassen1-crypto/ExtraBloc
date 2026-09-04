@@ -4,55 +4,54 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Log;
 
 /**
- * Rafraîchit le cache local des données ERP (serveur lié).
+ * Rafraîchit le cache local des vues ERP (cache.erp_actes /
+ * cache.erp_acte_intervenants) sur une fenêtre glissante.
  *
- *   php artisan erp:cache-sync                 # fenêtre 90 jours (planifié /10 min)
- *   php artisan erp:cache-sync --jours=365     # premier remplissage
+ * À planifier toutes les ~10 minutes dans routes/console.php :
+ *
+ *   Schedule::command('erp:cache-sync')->everyTenMinutes()
+ *       ->withoutOverlapping()
+ *       ->onOneServer();
+ *
+ * Usage manuel (ex. après une longue coupure du serveur lié) :
+ *   php artisan erp:cache-sync --jours=180 --avant=14
  */
 class ErpCacheSync extends Command
 {
-    protected $signature = 'erp:cache-sync {--jours=90} {--avant=7}';
+    protected $signature = 'erp:cache-sync {--jours=90 : Nombre de jours en arrière à synchroniser} {--avant=7 : Nombre de jours en avant à synchroniser}';
 
-    protected $description = 'Synchronise cache.erp_actes / cache.erp_acte_intervenants depuis le serveur lié ERP';
+    protected $description = 'Synchronise localement (schéma cache.*) les données ERP utilisées par l\'écran Direction, pour éviter les requêtes lentes sur le serveur lié ERP_LINK.';
 
     public function handle(): int
     {
-        // Empêche deux synchros simultanées (la planification tourne toutes les 10 min).
-        $lock = Cache::lock('erp:cache-sync', 900);
+        $jours = (int) $this->option('jours');
+        $avant = (int) $this->option('avant');
 
-        if (! $lock->get()) {
-            $this->warn('Synchronisation déjà en cours, abandon.');
-            return self::SUCCESS;
-        }
+        $this->info(sprintf('Synchronisation du cache ERP (J-%d à J+%d)...', $jours, $avant));
 
-        $t0 = microtime(true);
+        $debut = microtime(true);
 
         try {
-            DB::connection('sqlsrv')
-                ->statement('EXEC cache.usp_refresh_erp @JoursArriere = ?, @JoursAvant = ?', [
-                    (int) $this->option('jours'),
-                    (int) $this->option('avant'),
-                ]);
-
-            // Les compteurs des écrans de reporting deviennent obsolètes.
-            Cache::tags(['reporting'])->flush();
-
-            $ms = (int) ((microtime(true) - $t0) * 1000);
-            $this->info("Cache ERP rafraîchi en {$ms} ms.");
-            Log::info('erp:cache-sync ok', ['duration_ms' => $ms]);
-
-            return self::SUCCESS;
+            DB::statement('EXEC cache.usp_refresh_erp @JoursArriere = ?, @JoursAvant = ?', [$jours, $avant]);
         } catch (\Throwable $e) {
-            Log::error('erp:cache-sync échec', ['message' => $e->getMessage()]);
-            $this->error($e->getMessage());
+            $this->error('Échec de la synchronisation : ' . $e->getMessage());
 
             return self::FAILURE;
-        } finally {
-            optional($lock)->release();
         }
+
+        $duree = round(microtime(true) - $debut, 2);
+
+        $dernierLog = DB::table('cache.sync_log')->orderByDesc('id')->first();
+
+        $this->info(sprintf(
+            'Terminé en %ss — %s actes, %s intervenants synchronisés.',
+            $duree,
+            $dernierLog->actes_count ?? '?',
+            $dernierLog->intervenants_count ?? '?'
+        ));
+
+        return self::SUCCESS;
     }
 }

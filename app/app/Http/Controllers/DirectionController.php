@@ -57,8 +57,13 @@ class DirectionController extends Controller
         $recherche = trim((string) $request->input('recherche', ''));
         $bloc = trim((string) $request->input('bloc', ''));
 
-        $declarations = $this->buildQuery($statuses, $dateDebut, $dateFin, $intervenant, $recherche, $bloc)
-            ->paginate(25)
+        // CORRECTIF PERF 3/3 (bug 500 en page 2 / grandes périodes) :
+        // ->paginate() sur une requête contenant les deux EXISTS de badges
+        // oblige Laravel à ré-exécuter TOUTE la requête (badges compris)
+        // une deuxième fois, juste pour compter le total. paginateDeclarations()
+        // sépare : 1) un COUNT rapide sans badges, 2) les 25 lignes de la
+        // page, 3) les badges calculés uniquement pour ces 25 lignes.
+        $declarations = $this->paginateDeclarations($statuses, $dateDebut, $dateFin, $intervenant, $recherche, $bloc, (int) $request->input('page', 1))
             ->withQueryString();
 
         $intervenantOptions = $this->intervenantOptions();
@@ -171,16 +176,25 @@ class DirectionController extends Controller
      * Requête de base des déclarations (jointures + filtres + colonne "rn"
      * de dé-duplication), SANS les colonnes "chevauchement"/"doublon_sous_dossier".
      *
-     * CORRECTIF PERF (bug de timeout sur /direction) : la sous-requête "i"
-     * ci-dessous joignait TOUT app.vw_erp_acte_intervenants à TOUT
-     * app.vw_erp_actes_bloc_direction, sans aucun filtre — soit tout
-     * l'historique ERP depuis toujours, recalculé à chaque chargement de
-     * la page, via le serveur lié ERP_LINK. C'était la requête à ~11-13s
-     * relancée 5 fois par page (cf. le trace d'erreur "Maximum execution
-     * time of 60 seconds exceeded"). On la restreint maintenant aux
-     * NumIntv qui ont RÉELLEMENT une déclaration dans app.extra_declarations
-     * (univers bien plus petit que tout l'historique ERP, et c'est de
-     * toute façon le seul univers qui compte pour cet écran).
+     * CORRECTIF PERF 1/2 (bug de timeout sur /direction) : cette sous-requête
+     * joignait TOUT cache.erp_acte_intervenants à TOUT cache.erp_actes (à
+     * l'origine : app.vw_erp_acte_intervenants / app.vw_erp_actes_bloc_direction,
+     * des vues qui interrogeaient ERP_LINK en direct), sans aucun filtre —
+     * soit tout l'historique ERP depuis toujours, recalculé à chaque
+     * chargement de la page. C'était la requête à ~11-13s relancée 5 fois
+     * par page (cf. "Maximum execution time of 60 seconds exceeded").
+     * On la restreint aux NumIntv qui ont RÉELLEMENT une déclaration dans
+     * app.extra_declarations (univers bien plus petit que tout l'historique
+     * ERP, et le seul qui compte pour cet écran).
+     *
+     * CORRECTIF PERF 2/2 : a/i pointent maintenant sur cache.erp_actes /
+     * cache.erp_acte_intervenants — des tables LOCALES et INDEXÉES,
+     * synchronisées toutes les ~10 min depuis ERP_LINK par la commande
+     * `php artisan erp:cache-sync` (voir app/Console/Commands/ErpCacheSync.php
+     * et database/sql/30_cache_erp.sql). Avant ce cache, chaque ligne de
+     * badge (chevauchement/doublon) redéclenchait une jointure sur les vues
+     * live ERP_LINK — d'où les 34-38s observées même avec seulement 306
+     * déclarations en base.
      *
      * Une seule ligne est retenue par (dossier, intervenant, acte, jour) —
      * la clé d'un doublon réel :
@@ -204,8 +218,8 @@ class DirectionController extends Controller
         // garde donc qu'UNE ligne par (NumIntv, CodInterv) : celle dont la
         // date de pointage est la PLUS PROCHE de la date de l'acte (le bon
         // pointage, quelle que soit l'année).
-        $acteIntervenants = DB::table('app.vw_erp_acte_intervenants as i')
-            ->leftJoin('app.vw_erp_actes_bloc_direction as a', 'i.NumIntv', '=', 'a.NumIntv')
+        $acteIntervenants = DB::table('cache.erp_acte_intervenants as i')
+            ->leftJoin('cache.erp_actes as a', 'i.NumIntv', '=', 'a.NumIntv')
             ->whereIn('i.NumIntv', function ($q): void {
                 $q->select('num_intv')->from('app.extra_declarations');
             })
@@ -216,7 +230,7 @@ class DirectionController extends Controller
             ) AS i_rn");
 
         return DB::table('app.extra_declarations as d')
-            ->leftJoin('app.vw_erp_actes_bloc_direction as a', 'd.num_intv', '=', 'a.NumIntv')
+            ->leftJoin('cache.erp_actes as a', 'd.num_intv', '=', 'a.NumIntv')
             ->leftJoinSub($acteIntervenants, 'i', function ($join): void {
                 $join->on('d.num_intv', '=', 'i.NumIntv')
                     ->on('d.cod_interv', '=', 'i.CodInterv')
@@ -279,7 +293,7 @@ class DirectionController extends Controller
             // contrôler (ex: 10:00-16:00 et 11:00-15:30 le même jour).
             ->selectRaw("CASE WHEN EXISTS (
                 SELECT 1 FROM app.extra_declarations d2
-                INNER JOIN app.vw_erp_actes_bloc_direction a2 ON d2.num_intv = a2.NumIntv
+                INNER JOIN cache.erp_actes a2 ON d2.num_intv = a2.NumIntv
                 WHERE d2.cod_interv = d.cod_interv
                   AND d2.id <> d.id
                   AND d2.statut <> 'REJETE'
@@ -296,7 +310,7 @@ class DirectionController extends Controller
             // avec IdentifiantPatient en repli si le CIN n'est pas renseigné.
             ->selectRaw("CASE WHEN EXISTS (
                 SELECT 1 FROM app.extra_declarations d3
-                INNER JOIN app.vw_erp_actes_bloc_direction a3 ON d3.num_intv = a3.NumIntv
+                INNER JOIN cache.erp_actes a3 ON d3.num_intv = a3.NumIntv
                 WHERE d3.cod_interv = d.cod_interv
                   AND d3.id <> d.id
                   AND d3.statut <> 'REJETE'
@@ -321,6 +335,88 @@ class DirectionController extends Controller
             ->where('t.rn', 1)
             ->orderBy('t.DesInterv')
             ->orderBy('t.DatOpe');
+    }
+
+    /**
+     * Pagination de l'écran Direction, en 3 étapes volontairement séparées
+     * pour ne jamais payer le coût des badges (chevauchement/doublon) sur
+     * autre chose que les 25 lignes réellement affichées :
+     *
+     *   1. total = COUNT sur declarationsBase() (SANS badges)
+     *   2. items = les 25 lignes de la page demandée (SANS badges non plus)
+     *   3. badges = un aller-retour ciblé sur les seuls `id` de ces 25 lignes
+     *
+     * C'est ce qui manquait à un simple ->paginate() : celui-ci ré-exécute
+     * la requête complète (badges compris) une deuxième fois rien que pour
+     * compter le total, ce qui doublait le coût et provoquait le 500 sur la
+     * page 2 / les périodes larges (le total ET la page dépassaient le
+     * timeout).
+     */
+    private function paginateDeclarations(array $statuses, string $dateDebut, string $dateFin, string $intervenant, string $recherche, string $bloc, int $page, int $perPage = 25): \Illuminate\Pagination\LengthAwarePaginator
+    {
+        $page = max(1, $page);
+        $base = $this->declarationsBase($dateDebut, $dateFin, $intervenant, $recherche, $bloc, $statuses);
+
+        $total = DB::query()->fromSub($base, 't')->where('t.rn', 1)->count();
+
+        $items = DB::query()->fromSub($base, 't')
+            ->where('t.rn', 1)
+            ->orderBy('t.DesInterv')
+            ->orderBy('t.DatOpe')
+            ->forPage($page, $perPage)
+            ->get();
+
+        $ids = $items->pluck('id')->all();
+
+        if ($ids !== []) {
+            // Un id (=une déclaration) identifie sans ambiguïté la ligne :
+            // NumIntv seul ne suffit pas, un même acte peut avoir plusieurs
+            // intervenants donc plusieurs déclarations distinctes.
+            $badges = DB::table('app.extra_declarations as d')
+                ->leftJoin('cache.erp_actes as a', 'd.num_intv', '=', 'a.NumIntv')
+                ->whereIn('d.id', $ids)
+                ->selectRaw("d.id,
+                    CASE WHEN EXISTS (
+                        SELECT 1 FROM app.extra_declarations d2
+                        INNER JOIN cache.erp_actes a2 ON d2.num_intv = a2.NumIntv
+                        WHERE d2.cod_interv = d.cod_interv
+                          AND d2.id <> d.id
+                          AND d2.statut <> 'REJETE'
+                          AND a2.HDAnest IS NOT NULL AND a2.HFAnest IS NOT NULL
+                          AND a.HDAnest IS NOT NULL AND a.HFAnest IS NOT NULL
+                          AND CAST(a2.DatOpe AS date) = CAST(a.DatOpe AS date)
+                          AND a2.HDAnest < a.HFAnest AND a2.HFAnest > a.HDAnest
+                    ) THEN 1 ELSE 0 END AS chevauchement,
+                    CASE WHEN EXISTS (
+                        SELECT 1 FROM app.extra_declarations d3
+                        INNER JOIN cache.erp_actes a3 ON d3.num_intv = a3.NumIntv
+                        WHERE d3.cod_interv = d.cod_interv
+                          AND d3.id <> d.id
+                          AND d3.statut <> 'REJETE'
+                          AND a3.CodeActe = a.CodeActe
+                          AND a3.NumDoss <> a.NumDoss
+                          AND (
+                                (a.CinPatient IS NOT NULL AND a3.CinPatient = a.CinPatient)
+                             OR (a.CinPatient IS NULL AND a.IdentifiantPatient IS NOT NULL AND a3.IdentifiantPatient = a.IdentifiantPatient)
+                          )
+                    ) THEN 1 ELSE 0 END AS doublon_sous_dossier
+                ")
+                ->get()
+                ->keyBy('id');
+
+            foreach ($items as $item) {
+                $item->chevauchement = (int) ($badges[$item->id]->chevauchement ?? 0);
+                $item->doublon_sous_dossier = (int) ($badges[$item->id]->doublon_sous_dossier ?? 0);
+            }
+        }
+
+        return new \Illuminate\Pagination\LengthAwarePaginator(
+            $items,
+            $total,
+            $perPage,
+            $page,
+            ['path' => \Illuminate\Support\Facades\URL::current(), 'query' => request()->query()]
+        );
     }
 
     public function decide(Request $request, int $declaration): RedirectResponse
