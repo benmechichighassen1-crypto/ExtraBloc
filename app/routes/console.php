@@ -12,6 +12,6 @@ Artisan::command('inspire', function () {
 // cache.erp_acte_intervenants) utilisé par l'écran Direction.
 // Voir app/Console/Commands/ErpCacheSync.php et database/sql/30_cache_erp.sql.
 Schedule::command('erp:cache-sync')
-    ->everyTenMinutes()
+    ->cron('*/20 * * * *')
     ->withoutOverlapping()
     ->onOneServer();

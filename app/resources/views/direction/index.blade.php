@@ -154,7 +154,7 @@
         <td><span class="badge status-{{ strtolower($item->statut) }}">{{ $statusLabels[$item->statut] ?? $item->statut }}</span></td>
         <td>
             @if($canValidate && in_array($item->statut, ['SOUMIS','PREVALIDE','VALIDE'], true))
-                <form method="post" action="{{ route('direction.declarations.montant', $item->id) }}" onchange="this.submit()" title="Choisir ou corriger le montant (enregistré automatiquement et journalisé)">
+                <form method="post" action="{{ route('direction.declarations.montant', $item->id) }}" data-ajax-form onchange="this.requestSubmit()" title="Choisir ou corriger le montant (enregistré automatiquement et journalisé)">
                     @csrf @method('PATCH')
                     <label class="muted" style="display:block;font-size:11px;margin-bottom:3px">Montant</label>
                     <select name="montant" required style="width:100px">
@@ -181,7 +181,7 @@
                 @if($validationBloquee)
                     <p class="muted" style="margin:0 0 6px;text-align:left">En attente de pré-validation par le major du bloc avant validation finale.</p>
                 @endif
-                <form method="post" action="{{ route('direction.declarations.decide', $item->id) }}" class="row" style="justify-content:flex-end;flex-wrap:nowrap">@csrf @method('PATCH')
+                <form method="post" action="{{ route('direction.declarations.decide', $item->id) }}" class="row" style="justify-content:flex-end;flex-wrap:nowrap" data-ajax-form>@csrf @method('PATCH')
                     <input name="motif" placeholder="Motif (obligatoire si refus)" style="min-width:150px">
                     <button class="success" name="decision" value="VALIDE" @disabled($validationBloquee) title="{{ $validationBloquee ? 'Pré-validation requise avant validation finale' : '' }}" onclick="this.form.querySelector('[name=motif]').required=false">Valider</button>
                     <button class="danger" name="decision" value="REJETE" onclick="this.form.querySelector('[name=motif]').required=true">Refuser</button>
@@ -243,9 +243,83 @@
         }
         .pointage-info-btn:hover { background:#c7e0f2; color:#0e3f61; box-shadow:inset 0 0 0 1px #7fb0d6 }
         .btn-outline { background:#fff; color:#1779ba; border:1px solid #ccd8e1 }
+
+        #toast-container { position:fixed; top:16px; left:50%; transform:translateX(-50%); z-index:100; display:flex; flex-direction:column; gap:8px; align-items:center }
+        .toast {
+            padding:12px 20px; border-radius:8px; font-size:14px; font-weight:600; box-shadow:0 4px 14px rgba(0,0,0,.18);
+            opacity:0; transform:translateY(-12px); transition:opacity .2s ease, transform .2s ease; max-width:90vw;
+        }
+        .toast.show { opacity:1; transform:translateY(0) }
+        .toast-success { background:#e8f6ec; color:#1c6b36; border:1px solid #b6e0c3 }
+        .toast-error   { background:#fdecea; color:#a02818; border:1px solid #f2b8b1 }
     </style>
 
+    <div id="toast-container"></div>
+
     <script>
+        function showToast(message, type) {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = 'toast toast-' + (type === 'error' ? 'error' : 'success');
+            toast.textContent = message;
+            container.appendChild(toast);
+            requestAnimationFrame(function () { toast.classList.add('show'); });
+            setTimeout(function () {
+                toast.classList.remove('show');
+                setTimeout(function () { toast.remove(); }, 250);
+            }, 4000);
+        }
+
+        // Intercepte tous les formulaires marqués data-ajax-form : envoie en
+        // AJAX (Accept: application/json), affiche une notification en haut
+        // au lieu de recharger la page. En cas de succès, on recharge quand
+        // même après un court délai pour que les compteurs/statuts affichés
+        // restent synchronisés avec la base — mais l'utilisateur voit
+        // d'abord la confirmation, sans l'attente d'un rechargement complet.
+        // En cas d'erreur (ex. "Veuillez renseigner ce champ"), AUCUN
+        // rechargement : seule la notification s'affiche.
+        document.addEventListener('submit', function (event) {
+            const form = event.target;
+            if (!form.matches('[data-ajax-form]')) {
+                return;
+            }
+            event.preventDefault();
+
+            const submitter = event.submitter;
+            const formData = new FormData(form);
+            if (submitter && submitter.name) {
+                formData.set(submitter.name, submitter.value);
+            }
+
+            const buttons = form.querySelectorAll('button');
+            buttons.forEach(function (b) { b.disabled = true; });
+
+            fetch(form.action, {
+                method: 'POST',
+                headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                body: formData,
+            })
+                .then(function (res) {
+                    return res.json().then(function (body) { return { status: res.status, body: body }; });
+                })
+                .then(function (result) {
+                    if (result.status >= 200 && result.status < 300) {
+                        showToast(result.body.message || 'Enregistré.', 'success');
+                        setTimeout(function () { window.location.reload(); }, 900);
+                    } else {
+                        const firstError = result.body.errors
+                            ? Object.values(result.body.errors)[0][0]
+                            : (result.body.message || 'Une erreur est survenue.');
+                        showToast(firstError, 'error');
+                        buttons.forEach(function (b) { b.disabled = false; });
+                    }
+                })
+                .catch(function () {
+                    showToast('Erreur réseau, veuillez réessayer.', 'error');
+                    buttons.forEach(function (b) { b.disabled = false; });
+                });
+        });
+
         function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 
         function openPointageModal(matricule, date, intervenant) {

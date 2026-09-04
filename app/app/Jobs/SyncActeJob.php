@@ -13,16 +13,20 @@ use Illuminate\Support\Facades\Log;
 /**
  * Resynchronise IMMÉDIATEMENT le cache local (cache.erp_actes /
  * cache.erp_acte_intervenants) pour un acte précis, sans attendre le
- * prochain passage planifié de `erp:cache-sync` (~10 min).
+ * prochain passage planifié de `erp:cache-sync` (~20 min).
  *
- * À déclencher juste après la création/modification d'une déclaration dans
- * app.extra_declarations, pour que la personne qui vient de saisir voie
- * immédiatement les bonnes infos ERP sur l'écran Direction, ex. :
+ * Deux façons de le déclencher :
  *
- *   \App\Jobs\SyncActeJob::dispatch($declaration->num_intv);
+ *   1. Manuellement, en ligne de commande (voir app/Console/Commands/ErpSyncActe.php) :
+ *        php artisan erp:sync-acte 1234
  *
- * (à ajouter dans le contrôleur/service qui crée la déclaration — je ne l'ai
- * pas trouvé dans le zip fourni, donc à brancher manuellement).
+ *   2. Automatiquement, juste après la création/modification d'une
+ *      déclaration dans app.extra_declarations, pour que la personne qui
+ *      vient de saisir voie immédiatement les bonnes infos ERP sur l'écran
+ *      Direction :
+ *        \App\Jobs\SyncActeJob::dispatch($declaration->num_intv);
+ *      (à ajouter dans le contrôleur/service qui crée la déclaration — je
+ *      ne l'ai pas trouvé dans le zip fourni, donc à brancher manuellement).
  */
 class SyncActeJob implements ShouldQueue
 {

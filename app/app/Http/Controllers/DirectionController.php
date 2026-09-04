@@ -419,7 +419,7 @@ class DirectionController extends Controller
         );
     }
 
-    public function decide(Request $request, int $declaration): RedirectResponse
+    public function decide(Request $request, int $declaration): RedirectResponse|JsonResponse
     {
         abort_unless(AccessControl::hasDirectionAccess($request->user()->getAuthIdentifier()), 403, 'Accès en lecture seule : la validation est réservée à la direction.');
 
@@ -436,6 +436,10 @@ class DirectionController extends Controller
             // Certains services n'attendent pas la pré-validation du major :
             // la direction valide directement. Dans ce cas le montant doit
             // être renseigné (via la colonne « Montant ») avant la validation.
+            // Cette exception est automatiquement renvoyée en JSON (422) par
+            // Laravel quand la requête envoie "Accept: application/json" —
+            // c'est ce que fait le fetch() de la page pour éviter le
+            // rechargement complet (voir le <script> en bas de la vue).
             if ($data['decision'] === 'VALIDE' && $item->montant === null) {
                 throw \Illuminate\Validation\ValidationException::withMessages(['montant' => 'Veuillez renseigner ce champ.']);
             }
@@ -459,6 +463,10 @@ class DirectionController extends Controller
             ]);
         });
 
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'message' => 'Décision enregistrée et journalisée.']);
+        }
+
         return back()->with('success', 'Décision enregistrée et journalisée.');
     }
 
@@ -467,7 +475,7 @@ class DirectionController extends Controller
      * Le montant est obligatoire et la correction est journalisée dans
      * app.extra_declaration_audits (action "MONTANT_CORRIGE").
      */
-    public function updateMontant(Request $request, int $declaration): RedirectResponse
+    public function updateMontant(Request $request, int $declaration): RedirectResponse|JsonResponse
     {
         abort_unless(AccessControl::hasDirectionAccess($request->user()->getAuthIdentifier()), 403, 'Accès en lecture seule : la correction du montant est réservée à la direction.');
 
@@ -489,6 +497,10 @@ class DirectionController extends Controller
                 'donnees_apres'   => json_encode(['montant' => $data['montant'], 'motif' => $data['motif']]),
             ]);
         });
+
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'message' => 'Montant corrigé et journalisé.']);
+        }
 
         return back()->with('success', 'Montant corrigé et journalisé.');
     }
