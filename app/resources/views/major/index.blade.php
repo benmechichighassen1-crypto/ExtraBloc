@@ -132,7 +132,7 @@
                 <form method="post" action="{{ route('major.declarations.decide', $item->id) }}" class="row" style="justify-content:flex-end;flex-wrap:nowrap">@csrf @method('PATCH')
                     <select name="montant" required onchange="this.required = (document.activeElement && document.activeElement.value==='PREVALIDE')">
                         <option value="">Montant…</option>
-                        @foreach([100,150,200,250,300] as $m)<option value="{{ $m }}">{{ $m }}</option>@endforeach
+                        @foreach([100,150,200,250,300,350,400] as $m)<option value="{{ $m }}">{{ $m }}</option>@endforeach
                     </select>
                     <input name="motif" placeholder="Motif (obligatoire si refus)" style="min-width:150px">
                     <button class="success" name="decision" value="PREVALIDE" onclick="this.form.querySelector('[name=motif]').required=false;this.form.querySelector('[name=montant]').required=true">Prévalider</button>

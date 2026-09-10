@@ -159,7 +159,7 @@
                     <label class="muted" style="display:block;font-size:11px;margin-bottom:3px">Montant</label>
                     <select name="montant" required style="width:100px">
                         <option value="" disabled @selected($item->montant === null || $item->montant === '')>—</option>
-                        @foreach([100,150,200,250,300] as $m)<option value="{{ $m }}" @selected((int) $item->montant === $m)>{{ $m }}</option>@endforeach
+                        @foreach([100,150,200,250,300,350,400] as $m)<option value="{{ $m }}" @selected((int) $item->montant === $m)>{{ $m }}</option>@endforeach
                     </select>
                 </form>
             @else
@@ -283,9 +283,36 @@
             if (!form.matches('[data-ajax-form]')) {
                 return;
             }
-            event.preventDefault();
 
             const submitter = event.submitter;
+
+            // Cas "Valider" sans montant renseigné : on reproduit ici la
+            // même bulle de validation native que sur l'écran de
+            // pré-validation (où le champ Montant fait partie du même
+            // <form> que les boutons). Sur Direction, Montant est dans un
+            // <form> séparé (auto-enregistré à chaque changement), donc le
+            // navigateur ne peut pas le vérifier tout seul avant l'envoi du
+            // formulaire Valider/Refuser — on le fait nous-mêmes, AVANT
+            // tout appel serveur : aucun rechargement, aucune notification
+            // générique, juste la bulle pointée sur le bon champ.
+            if (submitter && submitter.value === 'VALIDE') {
+                const row = form.closest('tr');
+                const montantSelect = row ? row.querySelector('select[name="montant"]') : null;
+                if (montantSelect && !montantSelect.value) {
+                    event.preventDefault();
+                    montantSelect.setCustomValidity('Sélectionnez un montant avant de valider.');
+                    montantSelect.reportValidity();
+                    montantSelect.focus();
+                    montantSelect.addEventListener('change', function resetValidity() {
+                        montantSelect.setCustomValidity('');
+                        montantSelect.removeEventListener('change', resetValidity);
+                    });
+
+                    return;
+                }
+            }
+
+            event.preventDefault();
             const formData = new FormData(form);
             if (submitter && submitter.name) {
                 formData.set(submitter.name, submitter.value);

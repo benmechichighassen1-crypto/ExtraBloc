@@ -51,7 +51,7 @@ class MajorController extends Controller
     {
         $data = $request->validate([
             'decision' => ['required', 'in:PREVALIDE,REJETE'],
-            'montant'  => [$request->input('decision') === 'PREVALIDE' ? 'required' : 'nullable', 'integer', 'in:100,150,200,250,300'],
+            'montant'  => [$request->input('decision') === 'PREVALIDE' ? 'required' : 'nullable', 'integer', 'in:100,150,200,250,300,350,400'],
             'motif'    => [$request->input('decision') === 'REJETE' ? 'required' : 'nullable', 'string', 'max:500'],
         ]);
 

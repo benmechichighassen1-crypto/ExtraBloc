@@ -480,7 +480,7 @@ class DirectionController extends Controller
         abort_unless(AccessControl::hasDirectionAccess($request->user()->getAuthIdentifier()), 403, 'Accès en lecture seule : la correction du montant est réservée à la direction.');
 
         $data = $request->validate([
-            'montant' => ['required', 'integer', 'in:100,150,200,250,300'],
+            'montant' => ['required', 'integer', 'in:100,150,200,250,300,350,400'],
             'motif'   => ['nullable', 'string', 'max:500'],
         ]);
 
