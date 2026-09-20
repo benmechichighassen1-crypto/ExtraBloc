@@ -107,10 +107,13 @@ class TechnicianController extends Controller
         // si la facturation transfère l'acte vers un sous-dossier). Le
         // numéro de CIN (CinPatient) est privilégié : plus fiable que
         // IdentifiantPatient, qui peut différer entre le dossier d'origine
-        // et un sous-dossier créé par la facturation.
+        // et un sous-dossier créé par la facturation. DatOpe est nécessaire
+        // pour ne comparer que le MÊME épisode (voir le contrôle de date
+        // plus bas) : un même acte chez le même patient, à des mois
+        // d'intervalle, est une récidive légitime, pas un doublon.
         $acte = DB::table('app.vw_erp_actes_bloc_direction')
             ->where('NumIntv', $data['num_intv'])
-            ->select('CodeActe', 'IdentifiantPatient', 'CinPatient')
+            ->select('CodeActe', 'IdentifiantPatient', 'CinPatient', 'DatOpe')
             ->first();
 
         $skippedDuplicates = [];
@@ -127,16 +130,24 @@ class TechnicianController extends Controller
                 }
 
                 // Doublon inter-dossier : même intervenant et même acte déjà
-                // déclarés sur un AUTRE numéro de dossier (non refusé), pour
-                // le même patient (CinPatient en priorité, IdentifiantPatient
-                // en repli si le CIN n'est pas renseigné).
-                if ($acte && ($acte->CinPatient || $acte->IdentifiantPatient)) {
+                // déclarés le MÊME JOUR sur un AUTRE numéro de dossier (non
+                // refusé), pour le même patient (CinPatient en priorité,
+                // IdentifiantPatient en repli si le CIN n'est pas renseigné).
+                // La condition de date est indispensable : sans elle, une
+                // récidive légitime du même acte chez le même patient, des
+                // semaines ou des mois plus tard, était bloquée à tort comme
+                // "doublon". $acte->CodeActe !== null évite aussi un piège
+                // Laravel : ->where('col', null) se transforme en
+                // whereNull('col'), qui aurait matché n'importe quel acte
+                // sans CodeActe renseigné côté ERP.
+                if ($acte && $acte->CodeActe !== null && $acte->DatOpe && ($acte->CinPatient || $acte->IdentifiantPatient)) {
                     $doublon = DB::table('app.extra_declarations as d2')
                         ->join('app.vw_erp_actes_bloc_direction as a2', 'd2.num_intv', '=', 'a2.NumIntv')
                         ->where('d2.cod_interv', $participant->CodInterv)
                         ->where('d2.statut', '<>', 'REJETE')
                         ->where('a2.CodeActe', $acte->CodeActe)
                         ->where('d2.num_doss', '<>', $data['num_doss'])
+                        ->whereRaw('CAST(a2.DatOpe AS date) = CAST(? AS date)', [$acte->DatOpe])
                         ->where(function ($q) use ($acte): void {
                             if ($acte->CinPatient) {
                                 $q->where('a2.CinPatient', $acte->CinPatient);
