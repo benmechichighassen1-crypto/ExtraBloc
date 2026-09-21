@@ -237,8 +237,18 @@ class DirectionController extends Controller
                     ->on('i.i_rn', '=', DB::raw('1'));
             })
             ->when($statuses, fn ($q) => $q->whereIn('d.statut', $statuses))
-            ->whereDate('a.DatOpe', '>=', $dateDebut)
-            ->whereDate('a.DatOpe', '<=', $dateFin)
+            // TRY_CONVERT(datetime2, d.date_acte) est un instantané pris à un moment donné du cycle
+            // de vie de la déclaration (constaté : rempli pour les
+            // déclarations déjà traitées historiquement, mais PAS alimenté
+            // pour les nouvelles déclarations tant qu'aucun mécanisme ne le
+            // fait - à clarifier côté SQL). a.DatOpe (cache ERP) dépend lui
+            // de la fenêtre de cache glissante, mais est TOUJOURS à jour
+            // pour un acte récent. Le COALESCE prend le premier disponible :
+            // ni une déclaration ancienne (a.DatOpe hors fenêtre, mais
+            // TRY_CONVERT(datetime2, d.date_acte) renseigné) ni une déclaration récente (TRY_CONVERT(datetime2, d.date_acte)
+            // pas encore renseigné, mais a.DatOpe dans le cache) n'est perdue.
+            ->whereRaw('COALESCE(TRY_CONVERT(datetime2, d.date_acte), a.DatOpe) >= ?', [$dateDebut])
+            ->whereRaw('COALESCE(TRY_CONVERT(datetime2, d.date_acte), a.DatOpe) < ?', [Carbon::parse($dateFin)->addDay()->toDateString()])
             ->when($bloc !== '', fn ($q) => $q->where('a.CodBloc', $bloc))
             ->when($intervenant !== '', function ($q) use ($intervenant): void {
                 // Le champ "Intervenant" est rempli via une liste avec recherche
@@ -255,14 +265,31 @@ class DirectionController extends Controller
             ->when($recherche !== '', function ($q) use ($recherche): void {
                 $q->where(function ($sub) use ($recherche): void {
                     $sub->where('d.num_doss', 'like', '%'.$recherche.'%')
-                        ->orWhere('a.NomPatient', 'like', '%'.$recherche.'%')
-                        ->orWhere('a.PrenomPatient', 'like', '%'.$recherche.'%');
+                        ->orWhereRaw('COALESCE(d.patient_nom, a.NomPatient) like ?', ['%'.$recherche.'%'])
+                        ->orWhereRaw('COALESCE(d.patient_prenom, a.PrenomPatient) like ?', ['%'.$recherche.'%']);
                 });
             })
-            ->select(
-                'd.*',
-                'a.LibelleActe', 'a.DatOpe', 'a.DesignationSalle', 'a.Chirurgien', 'a.Reanimateur', 'a.HDAnest', 'a.HFAnest', 'a.Debut_Anesthesie', 'a.Fin_Anesthesie',
-                'a.NomPatient', 'a.PrenomPatient',
+            ->select('d.*')
+            // Patient / acte / horaires : l'instantané permanent d'abord
+            // s'il existe, sinon la valeur vivante du cache ERP. Alias
+            // identiques aux anciens noms pour ne rien changer côté vue Blade.
+            ->selectRaw('COALESCE(d.acte_libelle, a.LibelleActe) as LibelleActe')
+            ->selectRaw('COALESCE(TRY_CONVERT(datetime2, d.date_acte), a.DatOpe) as DatOpe')
+            ->selectRaw('COALESCE(d.acte_salle, a.DesignationSalle) as DesignationSalle')
+            ->selectRaw('COALESCE(d.acte_chirurgien, a.Chirurgien) as Chirurgien')
+            ->selectRaw('COALESCE(d.acte_reanimateur, a.Reanimateur) as Reanimateur')
+            ->selectRaw('COALESCE(TRY_CONVERT(datetime2, d.planif_debut), a.HDAnest) as HDAnest')
+            ->selectRaw('COALESCE(TRY_CONVERT(datetime2, d.planif_fin), a.HFAnest) as HFAnest')
+            ->selectRaw('COALESCE(TRY_CONVERT(datetime2, d.anesthesie_debut), a.Debut_Anesthesie) as Debut_Anesthesie')
+            ->selectRaw('COALESCE(TRY_CONVERT(datetime2, d.anesthesie_fin), a.Fin_Anesthesie) as Fin_Anesthesie')
+            ->selectRaw('COALESCE(d.patient_nom, a.NomPatient) as NomPatient')
+            ->selectRaw('COALESCE(d.patient_prenom, a.PrenomPatient) as PrenomPatient')
+            // Ici, une vraie dépendance à la jointure cache : ce sont des
+            // données RH/pointeuse vivantes, jamais figées sur la
+            // déclaration (nom de l'intervenant, ses horaires prévus et son
+            // pointage réel ce jour-là). Blanc pour un acte hors fenêtre de
+            // cache tant qu'il n'a pas été resynchronisé (`erp:sync-acte`).
+            ->addSelect(
                 'i.DesInterv', 'i.DesTypInterv', 'i.LoginErp', 'i.MatriculePointeuse',
                 'i.HeureEmploiDebut1', 'i.HeureEmploiFin1', 'i.HeureEmploiDebut2', 'i.HeureEmploiFin2', 'i.Repos',
                 'i.HeurePointageEntree', 'i.HeurePointageSortie'
@@ -271,7 +298,7 @@ class DirectionController extends Controller
             // intervenant + même acte + même jour) et on ne conserve que la
             // ligne "rn = 1".
             ->selectRaw("ROW_NUMBER() OVER (
-                PARTITION BY d.num_doss, d.cod_interv, a.CodeActe, CONVERT(date, a.DatOpe)
+                PARTITION BY d.num_doss, d.cod_interv, COALESCE(d.acte_code, a.CodeActe), CONVERT(date, COALESCE(TRY_CONVERT(datetime2, d.date_acte), a.DatOpe))
                 ORDER BY CASE d.statut WHEN 'VALIDE' THEN 0 WHEN 'PREVALIDE' THEN 1 WHEN 'SOUMIS' THEN 2 ELSE 3 END,
                          d.declared_at DESC, d.id DESC
             ) AS rn");
@@ -282,6 +309,12 @@ class DirectionController extends Controller
      * doublon_sous_dossier). Ces deux EXISTS corrélés sont coûteux —
      * utilisés UNIQUEMENT pour l'affichage de la liste (buildQuery), jamais
      * pour les compteurs (statistiques), qui n'en ont pas besoin.
+     *
+     * Comme dans declarationsBase(), chaque champ utilise COALESCE(instantané,
+     * cache) : l'instantané d'app.extra_declarations n'est fiable que pour
+     * les déclarations déjà traitées historiquement (rien ne le renseigne
+     * pour les nouvelles déclarations à ce jour), donc on retombe sur le
+     * cache ERP tant que l'acte est dans sa fenêtre.
      */
     private function declarationsInner(string $dateDebut, string $dateFin, string $intervenant, string $recherche, string $bloc, array $statuses): \Illuminate\Database\Query\Builder
     {
@@ -293,32 +326,38 @@ class DirectionController extends Controller
             // contrôler (ex: 10:00-16:00 et 11:00-15:30 le même jour).
             ->selectRaw("CASE WHEN EXISTS (
                 SELECT 1 FROM app.extra_declarations d2
-                INNER JOIN cache.erp_actes a2 ON d2.num_intv = a2.NumIntv
+                LEFT JOIN cache.erp_actes a2 ON d2.num_intv = a2.NumIntv
                 WHERE d2.cod_interv = d.cod_interv
                   AND d2.id <> d.id
                   AND d2.statut <> 'REJETE'
-                  AND a2.HDAnest IS NOT NULL AND a2.HFAnest IS NOT NULL
-                  AND a.HDAnest IS NOT NULL AND a.HFAnest IS NOT NULL
-                  AND CAST(a2.DatOpe AS date) = CAST(a.DatOpe AS date)
-                  AND a2.HDAnest < a.HFAnest AND a2.HFAnest > a.HDAnest
+                  AND COALESCE(TRY_CONVERT(datetime2, d2.planif_debut), a2.HDAnest) IS NOT NULL AND COALESCE(TRY_CONVERT(datetime2, d2.planif_fin), a2.HFAnest) IS NOT NULL
+                  AND COALESCE(TRY_CONVERT(datetime2, d.planif_debut), a.HDAnest) IS NOT NULL AND COALESCE(TRY_CONVERT(datetime2, d.planif_fin), a.HFAnest) IS NOT NULL
+                  AND CAST(COALESCE(TRY_CONVERT(datetime2, d2.date_acte), a2.DatOpe) AS date) = CAST(COALESCE(TRY_CONVERT(datetime2, d.date_acte), a.DatOpe) AS date)
+                  AND COALESCE(TRY_CONVERT(datetime2, d2.planif_debut), a2.HDAnest) < COALESCE(TRY_CONVERT(datetime2, d.planif_fin), a.HFAnest)
+                  AND COALESCE(TRY_CONVERT(datetime2, d2.planif_fin), a2.HFAnest) > COALESCE(TRY_CONVERT(datetime2, d.planif_debut), a.HDAnest)
             ) THEN 1 ELSE 0 END AS chevauchement")
-            // Doublon inter-dossier : même intervenant, même patient et même
-            // acte déjà déclaré sur un AUTRE dossier — cas d'un acte
-            // transféré en sous-dossier par la facturation après la saisie
-            // initiale. Le rapprochement se fait par CinPatient (numéro de
-            // CIN, stable même quand la facturation crée un sous-dossier),
-            // avec IdentifiantPatient en repli si le CIN n'est pas renseigné.
+            // Doublon inter-dossier : même intervenant, même patient, même
+            // acte ET même jour, déjà déclarés sur un AUTRE dossier — cas
+            // d'un acte transféré en sous-dossier par la facturation après
+            // la saisie initiale. Le rapprochement se fait par patient_cin
+            // (stable même quand la facturation crée un sous-dossier), avec
+            // patient_identifiant en repli si le CIN n'est pas renseigné.
+            // La condition de date est indispensable : sans elle, une
+            // récidive légitime du même acte chez le même patient, des
+            // semaines ou des mois plus tard, était signalée à tort comme
+            // "doublon" (même bug déjà corrigé dans TechnicianController).
             ->selectRaw("CASE WHEN EXISTS (
                 SELECT 1 FROM app.extra_declarations d3
-                INNER JOIN cache.erp_actes a3 ON d3.num_intv = a3.NumIntv
+                LEFT JOIN cache.erp_actes a3 ON d3.num_intv = a3.NumIntv
                 WHERE d3.cod_interv = d.cod_interv
                   AND d3.id <> d.id
                   AND d3.statut <> 'REJETE'
-                  AND a3.CodeActe = a.CodeActe
-                  AND a3.NumDoss <> a.NumDoss
+                  AND COALESCE(d3.acte_code, a3.CodeActe) = COALESCE(d.acte_code, a.CodeActe)
+                  AND d3.num_doss <> d.num_doss
+                  AND CAST(COALESCE(TRY_CONVERT(datetime2, d3.date_acte), a3.DatOpe) AS date) = CAST(COALESCE(TRY_CONVERT(datetime2, d.date_acte), a.DatOpe) AS date)
                   AND (
-                        (a.CinPatient IS NOT NULL AND a3.CinPatient = a.CinPatient)
-                     OR (a.CinPatient IS NULL AND a.IdentifiantPatient IS NOT NULL AND a3.IdentifiantPatient = a.IdentifiantPatient)
+                        (COALESCE(d.patient_cin, a.CinPatient) IS NOT NULL AND COALESCE(d3.patient_cin, a3.CinPatient) = COALESCE(d.patient_cin, a.CinPatient))
+                     OR (COALESCE(d.patient_cin, a.CinPatient) IS NULL AND COALESCE(d.patient_identifiant, a.IdentifiantPatient) IS NOT NULL AND COALESCE(d3.patient_identifiant, a3.IdentifiantPatient) = COALESCE(d.patient_identifiant, a.IdentifiantPatient))
                   )
             ) THEN 1 ELSE 0 END AS doublon_sous_dossier");
     }
@@ -372,32 +411,38 @@ class DirectionController extends Controller
             // Un id (=une déclaration) identifie sans ambiguïté la ligne :
             // NumIntv seul ne suffit pas, un même acte peut avoir plusieurs
             // intervenants donc plusieurs déclarations distinctes.
+            //
+            // Plus aucune dépendance au cache ERP ici : tout vient de
+            // l'instantané permanent sur app.extra_declarations, donc ces
+            // badges restent corrects même pour un acte hors fenêtre de cache.
             $badges = DB::table('app.extra_declarations as d')
                 ->leftJoin('cache.erp_actes as a', 'd.num_intv', '=', 'a.NumIntv')
                 ->whereIn('d.id', $ids)
                 ->selectRaw("d.id,
                     CASE WHEN EXISTS (
                         SELECT 1 FROM app.extra_declarations d2
-                        INNER JOIN cache.erp_actes a2 ON d2.num_intv = a2.NumIntv
+                        LEFT JOIN cache.erp_actes a2 ON d2.num_intv = a2.NumIntv
                         WHERE d2.cod_interv = d.cod_interv
                           AND d2.id <> d.id
                           AND d2.statut <> 'REJETE'
-                          AND a2.HDAnest IS NOT NULL AND a2.HFAnest IS NOT NULL
-                          AND a.HDAnest IS NOT NULL AND a.HFAnest IS NOT NULL
-                          AND CAST(a2.DatOpe AS date) = CAST(a.DatOpe AS date)
-                          AND a2.HDAnest < a.HFAnest AND a2.HFAnest > a.HDAnest
+                          AND COALESCE(TRY_CONVERT(datetime2, d2.planif_debut), a2.HDAnest) IS NOT NULL AND COALESCE(TRY_CONVERT(datetime2, d2.planif_fin), a2.HFAnest) IS NOT NULL
+                          AND COALESCE(TRY_CONVERT(datetime2, d.planif_debut), a.HDAnest) IS NOT NULL AND COALESCE(TRY_CONVERT(datetime2, d.planif_fin), a.HFAnest) IS NOT NULL
+                          AND CAST(COALESCE(TRY_CONVERT(datetime2, d2.date_acte), a2.DatOpe) AS date) = CAST(COALESCE(TRY_CONVERT(datetime2, d.date_acte), a.DatOpe) AS date)
+                          AND COALESCE(TRY_CONVERT(datetime2, d2.planif_debut), a2.HDAnest) < COALESCE(TRY_CONVERT(datetime2, d.planif_fin), a.HFAnest)
+                          AND COALESCE(TRY_CONVERT(datetime2, d2.planif_fin), a2.HFAnest) > COALESCE(TRY_CONVERT(datetime2, d.planif_debut), a.HDAnest)
                     ) THEN 1 ELSE 0 END AS chevauchement,
                     CASE WHEN EXISTS (
                         SELECT 1 FROM app.extra_declarations d3
-                        INNER JOIN cache.erp_actes a3 ON d3.num_intv = a3.NumIntv
+                        LEFT JOIN cache.erp_actes a3 ON d3.num_intv = a3.NumIntv
                         WHERE d3.cod_interv = d.cod_interv
                           AND d3.id <> d.id
                           AND d3.statut <> 'REJETE'
-                          AND a3.CodeActe = a.CodeActe
-                          AND a3.NumDoss <> a.NumDoss
+                          AND COALESCE(d3.acte_code, a3.CodeActe) = COALESCE(d.acte_code, a.CodeActe)
+                          AND d3.num_doss <> d.num_doss
+                          AND CAST(COALESCE(TRY_CONVERT(datetime2, d3.date_acte), a3.DatOpe) AS date) = CAST(COALESCE(TRY_CONVERT(datetime2, d.date_acte), a.DatOpe) AS date)
                           AND (
-                                (a.CinPatient IS NOT NULL AND a3.CinPatient = a.CinPatient)
-                             OR (a.CinPatient IS NULL AND a.IdentifiantPatient IS NOT NULL AND a3.IdentifiantPatient = a.IdentifiantPatient)
+                                (COALESCE(d.patient_cin, a.CinPatient) IS NOT NULL AND COALESCE(d3.patient_cin, a3.CinPatient) = COALESCE(d.patient_cin, a.CinPatient))
+                             OR (COALESCE(d.patient_cin, a.CinPatient) IS NULL AND COALESCE(d.patient_identifiant, a.IdentifiantPatient) IS NOT NULL AND COALESCE(d3.patient_identifiant, a3.IdentifiantPatient) = COALESCE(d.patient_identifiant, a.IdentifiantPatient))
                           )
                     ) THEN 1 ELSE 0 END AS doublon_sous_dossier
                 ")
@@ -480,7 +525,7 @@ class DirectionController extends Controller
         abort_unless(AccessControl::hasDirectionAccess($request->user()->getAuthIdentifier()), 403, 'Accès en lecture seule : la correction du montant est réservée à la direction.');
 
         $data = $request->validate([
-            'montant' => ['required', 'integer', 'in:100,150,200,250,300,350,400'],
+            'montant' => ['required', 'integer', 'in:100,150,200,250,300'],
             'motif'   => ['nullable', 'string', 'max:500'],
         ]);
 
