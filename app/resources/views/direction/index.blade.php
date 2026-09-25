@@ -11,9 +11,6 @@
         @if($errors->any())
             <div style="background:#fdecea;border:1px solid #f2b8b1;color:#a02818;padding:10px 14px;border-radius:8px;margin-bottom:14px">{{ $errors->first() }}</div>
         @endif
-        @if(session('success'))
-            <div style="background:#e8f6ec;border:1px solid #b6e0c3;color:#1c6b36;padding:12px 14px;border-radius:8px;margin-bottom:14px">{{ session('success') }}</div>
-        @endif
         <form method="get" class="filter-bar">
             <div class="filter-grid">
                 <div class="filter-field">
@@ -159,7 +156,7 @@
                     <label class="muted" style="display:block;font-size:11px;margin-bottom:3px">Montant</label>
                     <select name="montant" required style="width:100px">
                         <option value="" disabled @selected($item->montant === null || $item->montant === '')>—</option>
-                        @foreach([100,150,200,250,300,350,400] as $m)<option value="{{ $m }}" @selected((int) $item->montant === $m)>{{ $m }}</option>@endforeach
+                        @foreach([100,150,200,250,300] as $m)<option value="{{ $m }}" @selected((int) $item->montant === $m)>{{ $m }}</option>@endforeach
                     </select>
                 </form>
             @else
@@ -191,7 +188,7 @@
                 <div style="text-align:left"><strong>{{ $item->valide_par_username }}</strong><br>
                 <span class="muted">{{ \App\Support\Format::dateTime($item->valide_le) }}</span>
                 @if($item->motif_decision)<br><span class="muted">Motif : {{ $item->motif_decision }}</span>@endif</div>
-                <form method="post" action="{{ route('direction.declarations.invalidate', $item->id) }}" class="row" style="margin-top:8px;justify-content:flex-end;flex-wrap:nowrap" onsubmit="return confirm('Confirmer l’annulation de cette décision ? La déclaration repassera « En attente ».');">
+                <form method="post" action="{{ route('direction.declarations.invalidate', $item->id) }}" class="row" style="margin-top:8px;justify-content:flex-end;flex-wrap:nowrap" data-ajax-form onsubmit="return confirm('Confirmer l’annulation de cette décision ? La déclaration repassera « En attente ».');">
                     @csrf @method('PATCH')
                     <input name="motif" placeholder="Motif de la correction" required style="min-width:130px">
                     <button type="submit" style="background:#c67c1f">Dévalider</button>
@@ -316,6 +313,16 @@
             const formData = new FormData(form);
             if (submitter && submitter.name) {
                 formData.set(submitter.name, submitter.value);
+            }
+
+            // Le formulaire Valider/Refuser envoie aussi le montant
+            // actuellement affiché sur la ligne, pour ne plus dépendre d'un
+            // enregistrement séparé (auto-sauvegarde du select Montant) qui
+            // pourrait ne pas encore être arrivé côté serveur au moment où
+            // "Valider" est cliqué juste après avoir choisi un montant.
+            const montantForRow = form.closest('tr') ? form.closest('tr').querySelector('select[name="montant"]') : null;
+            if (montantForRow && montantForRow.value) {
+                formData.set('montant', montantForRow.value);
             }
 
             const buttons = form.querySelectorAll('button');

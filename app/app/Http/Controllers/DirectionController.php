@@ -471,12 +471,22 @@ class DirectionController extends Controller
         $data = $request->validate([
             'decision' => ['required', 'in:VALIDE,REJETE'],
             'motif' => [$request->input('decision') === 'REJETE' ? 'required' : 'nullable', 'string', 'max:500'],
+            // Envoyé directement avec la validation (valeur actuelle du
+            // sélecteur Montant de la ligne), pour ne plus dépendre d'un
+            // enregistrement séparé et potentiellement pas encore terminé :
+            // cliquer sur "Valider" juste après avoir choisi un montant
+            // pouvait sinon arriver avant la confirmation de cet
+            // enregistrement, et bloquer à tort avec "Veuillez renseigner
+            // ce champ" alors que l'utilisateur venait de le remplir.
+            'montant' => ['nullable', 'integer', 'in:100,150,200,250,300'],
         ]);
 
         DB::transaction(function () use ($declaration, $data, $request): void {
             $item = DB::table('app.extra_declarations')->where('id', $declaration)->lockForUpdate()->first();
             abort_unless($item, 404);
             abort_if(! in_array($item->statut, ['SOUMIS', 'PREVALIDE'], true), 422, 'Cette déclaration est déjà traitée.');
+
+            $montant = $data['montant'] ?? $item->montant;
 
             // Certains services n'attendent pas la pré-validation du major :
             // la direction valide directement. Dans ce cas le montant doit
@@ -485,8 +495,8 @@ class DirectionController extends Controller
             // Laravel quand la requête envoie "Accept: application/json" —
             // c'est ce que fait le fetch() de la page pour éviter le
             // rechargement complet (voir le <script> en bas de la vue).
-            if ($data['decision'] === 'VALIDE' && $item->montant === null) {
-                throw \Illuminate\Validation\ValidationException::withMessages(['montant' => 'Veuillez renseigner ce champ.']);
+            if ($data['decision'] === 'VALIDE' && $montant === null) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['montant' => 'Montant : veuillez renseigner ce champ avant de valider.']);
             }
 
             if ($data['decision'] === 'VALIDE' && config('etrasbloc.prevalidation_obligatoire') && $item->statut !== 'PREVALIDE') {
@@ -495,6 +505,7 @@ class DirectionController extends Controller
 
             DB::table('app.extra_declarations')->where('id', $declaration)->update([
                 'statut' => $data['decision'],
+                'montant' => $montant,
                 'valide_par_username' => $request->user()->getAuthIdentifier(),
                 'valide_le' => now(),
                 'motif_decision' => $data['motif'],
@@ -503,8 +514,8 @@ class DirectionController extends Controller
                 'declaration_id' => $declaration,
                 'action' => $data['decision'],
                 'acteur_username' => $request->user()->getAuthIdentifier(),
-                'donnees_avant' => json_encode(['statut' => $item->statut]),
-                'donnees_apres' => json_encode(['statut' => $data['decision'], 'motif' => $data['motif']]),
+                'donnees_avant' => json_encode(['statut' => $item->statut, 'montant' => $item->montant]),
+                'donnees_apres' => json_encode(['statut' => $data['decision'], 'montant' => $montant, 'motif' => $data['motif']]),
             ]);
         });
 
@@ -539,7 +550,7 @@ class DirectionController extends Controller
                 'action'          => 'MONTANT_CORRIGE',
                 'acteur_username' => $request->user()->getAuthIdentifier(),
                 'donnees_avant'   => json_encode(['montant' => $item->montant]),
-                'donnees_apres'   => json_encode(['montant' => $data['montant'], 'motif' => $data['motif']]),
+                'donnees_apres'   => json_encode(['montant' => $data['montant'], 'motif' => $data['motif'] ?? null]),
             ]);
         });
 
@@ -556,7 +567,7 @@ class DirectionController extends Controller
      * obligatoire et la traçabilité (qui / quand / pourquoi) est conservée
      * dans app.extra_declaration_audits, sans rien effacer de l'historique.
      */
-    public function invalidate(Request $request, int $declaration): RedirectResponse
+    public function invalidate(Request $request, int $declaration): RedirectResponse|JsonResponse
     {
         abort_unless(AccessControl::hasDirectionAccess($request->user()->getAuthIdentifier()), 403, 'Accès en lecture seule : la dévalidation est réservée à la direction.');
 
@@ -571,6 +582,12 @@ class DirectionController extends Controller
 
             DB::table('app.extra_declarations')->where('id', $declaration)->update([
                 'statut' => 'SOUMIS',
+                // Le montant précédent reste consultable dans la traçabilité
+                // (donnees_avant ci-dessous) : pas besoin de le garder sur la
+                // déclaration active, ça forcerait sinon une re-saisie
+                // ambiguë (montant de la décision annulée ou nouveau
+                // montant ?) la prochaine fois qu'elle sera validée.
+                'montant' => null,
                 'valide_par_username' => null,
                 'valide_le' => null,
                 'motif_decision' => null,
@@ -581,13 +598,18 @@ class DirectionController extends Controller
                 'acteur_username' => $request->user()->getAuthIdentifier(),
                 'donnees_avant' => json_encode([
                     'statut' => $item->statut,
+                    'montant' => $item->montant,
                     'valide_par_username' => $item->valide_par_username,
                     'valide_le' => $item->valide_le,
                     'motif_decision' => $item->motif_decision,
                 ]),
-                'donnees_apres' => json_encode(['statut' => 'SOUMIS', 'motif' => $data['motif']]),
+                'donnees_apres' => json_encode(['statut' => 'SOUMIS', 'montant' => null, 'motif' => $data['motif']]),
             ]);
         });
+
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'message' => 'Décision annulée : la déclaration repasse en attente et reste tracée dans l’historique.']);
+        }
 
         return back()->with('success', 'Décision annulée : la déclaration repasse en attente et reste tracée dans l’historique.');
     }
