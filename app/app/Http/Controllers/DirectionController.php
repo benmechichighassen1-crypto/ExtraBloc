@@ -247,8 +247,8 @@ class DirectionController extends Controller
             // ni une déclaration ancienne (a.DatOpe hors fenêtre, mais
             // TRY_CONVERT(datetime2, d.date_acte) renseigné) ni une déclaration récente (TRY_CONVERT(datetime2, d.date_acte)
             // pas encore renseigné, mais a.DatOpe dans le cache) n'est perdue.
-            ->whereRaw('COALESCE(TRY_CONVERT(datetime2, d.date_acte), a.DatOpe) >= ?', [$dateDebut])
-            ->whereRaw('COALESCE(TRY_CONVERT(datetime2, d.date_acte), a.DatOpe) < ?', [Carbon::parse($dateFin)->addDay()->toDateString()])
+            ->whereRaw('COALESCE(a.DatOpe, TRY_CONVERT(datetime2, d.date_acte)) >= ?', [$dateDebut])
+            ->whereRaw('COALESCE(a.DatOpe, TRY_CONVERT(datetime2, d.date_acte)) < ?', [Carbon::parse($dateFin)->addDay()->toDateString()])
             ->when($bloc !== '', fn ($q) => $q->where('a.CodBloc', $bloc))
             ->when($intervenant !== '', function ($q) use ($intervenant): void {
                 // Le champ "Intervenant" est rempli via une liste avec recherche
@@ -274,7 +274,7 @@ class DirectionController extends Controller
             // s'il existe, sinon la valeur vivante du cache ERP. Alias
             // identiques aux anciens noms pour ne rien changer côté vue Blade.
             ->selectRaw('COALESCE(d.acte_libelle, a.LibelleActe) as LibelleActe')
-            ->selectRaw('COALESCE(TRY_CONVERT(datetime2, d.date_acte), a.DatOpe) as DatOpe')
+            ->selectRaw('COALESCE(a.DatOpe, TRY_CONVERT(datetime2, d.date_acte)) as DatOpe')
             ->selectRaw('COALESCE(d.acte_salle, a.DesignationSalle) as DesignationSalle')
             ->selectRaw('COALESCE(d.acte_chirurgien, a.Chirurgien) as Chirurgien')
             ->selectRaw('COALESCE(d.acte_reanimateur, a.Reanimateur) as Reanimateur')
@@ -298,7 +298,7 @@ class DirectionController extends Controller
             // intervenant + même acte + même jour) et on ne conserve que la
             // ligne "rn = 1".
             ->selectRaw("ROW_NUMBER() OVER (
-                PARTITION BY d.num_doss, d.cod_interv, COALESCE(d.acte_code, a.CodeActe), CONVERT(date, COALESCE(TRY_CONVERT(datetime2, d.date_acte), a.DatOpe))
+                PARTITION BY d.num_doss, d.cod_interv, COALESCE(d.acte_code, a.CodeActe), CONVERT(date, COALESCE(a.DatOpe, TRY_CONVERT(datetime2, d.date_acte)))
                 ORDER BY CASE d.statut WHEN 'VALIDE' THEN 0 WHEN 'PREVALIDE' THEN 1 WHEN 'SOUMIS' THEN 2 ELSE 3 END,
                          d.declared_at DESC, d.id DESC
             ) AS rn");
@@ -332,7 +332,7 @@ class DirectionController extends Controller
                   AND d2.statut <> 'REJETE'
                   AND COALESCE(TRY_CONVERT(datetime2, d2.planif_debut), a2.HDAnest) IS NOT NULL AND COALESCE(TRY_CONVERT(datetime2, d2.planif_fin), a2.HFAnest) IS NOT NULL
                   AND COALESCE(TRY_CONVERT(datetime2, d.planif_debut), a.HDAnest) IS NOT NULL AND COALESCE(TRY_CONVERT(datetime2, d.planif_fin), a.HFAnest) IS NOT NULL
-                  AND CAST(COALESCE(TRY_CONVERT(datetime2, d2.date_acte), a2.DatOpe) AS date) = CAST(COALESCE(TRY_CONVERT(datetime2, d.date_acte), a.DatOpe) AS date)
+                  AND CAST(COALESCE(a2.DatOpe, TRY_CONVERT(datetime2, d2.date_acte)) AS date) = CAST(COALESCE(a.DatOpe, TRY_CONVERT(datetime2, d.date_acte)) AS date)
                   AND COALESCE(TRY_CONVERT(datetime2, d2.planif_debut), a2.HDAnest) < COALESCE(TRY_CONVERT(datetime2, d.planif_fin), a.HFAnest)
                   AND COALESCE(TRY_CONVERT(datetime2, d2.planif_fin), a2.HFAnest) > COALESCE(TRY_CONVERT(datetime2, d.planif_debut), a.HDAnest)
             ) THEN 1 ELSE 0 END AS chevauchement")
@@ -354,7 +354,7 @@ class DirectionController extends Controller
                   AND d3.statut <> 'REJETE'
                   AND COALESCE(d3.acte_code, a3.CodeActe) = COALESCE(d.acte_code, a.CodeActe)
                   AND d3.num_doss <> d.num_doss
-                  AND CAST(COALESCE(TRY_CONVERT(datetime2, d3.date_acte), a3.DatOpe) AS date) = CAST(COALESCE(TRY_CONVERT(datetime2, d.date_acte), a.DatOpe) AS date)
+                  AND CAST(COALESCE(a3.DatOpe, TRY_CONVERT(datetime2, d3.date_acte)) AS date) = CAST(COALESCE(a.DatOpe, TRY_CONVERT(datetime2, d.date_acte)) AS date)
                   AND (
                         (COALESCE(d.patient_cin, a.CinPatient) IS NOT NULL AND COALESCE(d3.patient_cin, a3.CinPatient) = COALESCE(d.patient_cin, a.CinPatient))
                      OR (COALESCE(d.patient_cin, a.CinPatient) IS NULL AND COALESCE(d.patient_identifiant, a.IdentifiantPatient) IS NOT NULL AND COALESCE(d3.patient_identifiant, a3.IdentifiantPatient) = COALESCE(d.patient_identifiant, a.IdentifiantPatient))
@@ -427,7 +427,7 @@ class DirectionController extends Controller
                           AND d2.statut <> 'REJETE'
                           AND COALESCE(TRY_CONVERT(datetime2, d2.planif_debut), a2.HDAnest) IS NOT NULL AND COALESCE(TRY_CONVERT(datetime2, d2.planif_fin), a2.HFAnest) IS NOT NULL
                           AND COALESCE(TRY_CONVERT(datetime2, d.planif_debut), a.HDAnest) IS NOT NULL AND COALESCE(TRY_CONVERT(datetime2, d.planif_fin), a.HFAnest) IS NOT NULL
-                          AND CAST(COALESCE(TRY_CONVERT(datetime2, d2.date_acte), a2.DatOpe) AS date) = CAST(COALESCE(TRY_CONVERT(datetime2, d.date_acte), a.DatOpe) AS date)
+                          AND CAST(COALESCE(a2.DatOpe, TRY_CONVERT(datetime2, d2.date_acte)) AS date) = CAST(COALESCE(a.DatOpe, TRY_CONVERT(datetime2, d.date_acte)) AS date)
                           AND COALESCE(TRY_CONVERT(datetime2, d2.planif_debut), a2.HDAnest) < COALESCE(TRY_CONVERT(datetime2, d.planif_fin), a.HFAnest)
                           AND COALESCE(TRY_CONVERT(datetime2, d2.planif_fin), a2.HFAnest) > COALESCE(TRY_CONVERT(datetime2, d.planif_debut), a.HDAnest)
                     ) THEN 1 ELSE 0 END AS chevauchement,
@@ -439,7 +439,7 @@ class DirectionController extends Controller
                           AND d3.statut <> 'REJETE'
                           AND COALESCE(d3.acte_code, a3.CodeActe) = COALESCE(d.acte_code, a.CodeActe)
                           AND d3.num_doss <> d.num_doss
-                          AND CAST(COALESCE(TRY_CONVERT(datetime2, d3.date_acte), a3.DatOpe) AS date) = CAST(COALESCE(TRY_CONVERT(datetime2, d.date_acte), a.DatOpe) AS date)
+                          AND CAST(COALESCE(a3.DatOpe, TRY_CONVERT(datetime2, d3.date_acte)) AS date) = CAST(COALESCE(a.DatOpe, TRY_CONVERT(datetime2, d.date_acte)) AS date)
                           AND (
                                 (COALESCE(d.patient_cin, a.CinPatient) IS NOT NULL AND COALESCE(d3.patient_cin, a3.CinPatient) = COALESCE(d.patient_cin, a.CinPatient))
                              OR (COALESCE(d.patient_cin, a.CinPatient) IS NULL AND COALESCE(d.patient_identifiant, a.IdentifiantPatient) IS NOT NULL AND COALESCE(d3.patient_identifiant, a3.IdentifiantPatient) = COALESCE(d.patient_identifiant, a.IdentifiantPatient))
