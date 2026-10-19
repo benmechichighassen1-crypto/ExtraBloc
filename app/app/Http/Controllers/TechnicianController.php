@@ -60,6 +60,7 @@ class TechnicianController extends Controller
             ->filter(fn ($status) => array_key_exists($status, $statusLabels))->all();
         $dateDebut = $request->input('date_debut', now()->startOfMonth()->toDateString());
         $dateFin = $request->input('date_fin', now()->toDateString());
+        $paye = DirectionController::resolvePaye($request);
 
         $declarations = collect();
 
@@ -68,6 +69,8 @@ class TechnicianController extends Controller
                 ->leftJoin('app.vw_erp_actes_bloc_direction as a', 'd.num_intv', '=', 'a.NumIntv')
                 ->whereIn('d.cod_interv', $codInterv)
                 ->when($statuses, fn ($q) => $q->whereIn('d.statut', $statuses))
+                ->when($paye === 'oui', fn ($q) => $q->where('d.statut', 'VALIDE')->where('d.paye', 1))
+                ->when($paye === 'non', fn ($q) => $q->where('d.paye', 0))
                 ->whereDate('a.DatOpe', '>=', $dateDebut)
                 ->whereDate('a.DatOpe', '<=', $dateFin)
                 ->select(
@@ -80,7 +83,7 @@ class TechnicianController extends Controller
                 ->withQueryString();
         }
 
-        return view('technician.historique', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'intervs'));
+        return view('technician.historique', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'paye', 'intervs'));
     }
 
     public function store(Request $request): RedirectResponse

@@ -1,6 +1,6 @@
 @php
     $statusLabels = \App\Http\Controllers\MajorController::STATUS_LABELS;
-    $filterableStatuses = ['SOUMIS' => 'En attente', 'PREVALIDE' => 'Prévalidé', 'REJETE' => 'Refusé'];
+    $filterableStatuses = ['SOUMIS' => 'En attente', 'PREVALIDE' => 'Prévalidé', 'VALIDE' => 'Validé', 'REJETE' => 'Refusé'];
 @endphp
 <x-layouts.app>
     <section class="card">
@@ -62,6 +62,15 @@
                 </div>
             </div>
 
+            <div class="filter-field">
+                <label class="filter-label">Paiement</label>
+                <div class="filter-statuses">
+                    @foreach(\App\Http\Controllers\DirectionController::PAYE_LABELS as $value => $label)
+                        <label class="status-toggle"><input type="radio" name="paye" value="{{ $value }}" @checked($paye === $value)> {{ $label }}</label>
+                    @endforeach
+                </div>
+            </div>
+
             <div class="filter-actions">
                 <button>Filtrer</button>
             </div>
@@ -86,7 +95,7 @@
         .modal-overlay { display:none; position:fixed; inset:0; background:#12345480; z-index:50; align-items:center; justify-content:center }
     </style>
 
-    <section class="card"><table><thead><tr><th>Intervenant / acte</th><th>Patient</th><th>Chirurgien</th><th>Date acte</th><th>Heure planification</th><th>Heure anesthésie</th><th>Heure pointage</th><th>Saisie</th><th>Statut</th><th>Décision</th></tr></thead><tbody>
+    <section class="card"><table><thead><tr><th>Intervenant / acte</th><th>Patient</th><th>Chirurgien</th><th>Date acte</th><th>Heure planification</th><th>Heure anesthésie</th><th>Heure pointage</th><th>Saisie</th><th>Statut</th><th>Montant</th><th>Paiement</th><th>Décision</th></tr></thead><tbody>
     @forelse($declarations as $item)<tr>
         <td>
             <strong>{{ $item->DesInterv ?? $item->cod_interv }}</strong><br>
@@ -127,6 +136,8 @@
         </td>
         <td>{{ $item->declared_by_username }}<br><span class="muted">{{ \App\Support\Format::dateTime($item->declared_at) }}</span></td>
         <td><span class="badge status-{{ strtolower($item->statut) }}">{{ $statusLabels[$item->statut] ?? $item->statut }}</span></td>
+        <td>@if($item->montant)<span class="badge" style="background:#e8f6ec;color:#1c6b36">{{ $item->montant }}</span>@else<span class="muted">—</span>@endif</td>
+        <td>@include('partials.paiement-badge', ['item' => $item])</td>
         <td style="text-align:right">
             @if($item->statut === 'SOUMIS')
                 <form method="post" action="{{ route('major.declarations.decide', $item->id) }}" class="row" style="justify-content:flex-end;flex-wrap:nowrap">@csrf @method('PATCH')
@@ -150,7 +161,7 @@
                 @if($item->motif_decision)<br><span class="muted">Motif : {{ $item->motif_decision }}</span>@endif</div>
             @endif
         </td>
-    </tr>@empty <tr><td colspan="10">Aucune déclaration.</td></tr>@endforelse
+    </tr>@empty <tr><td colspan="12">Aucune déclaration.</td></tr>@endforelse
     </tbody></table><div style="margin-top:16px">{{ $declarations->links() }}</div></section>
 
     <div id="pointage-modal-overlay" class="modal-overlay">

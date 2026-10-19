@@ -31,15 +31,16 @@ class MajorController extends Controller
         $intervenant = trim((string) $request->input('intervenant', ''));
         $recherche = trim((string) $request->input('recherche', ''));
         $bloc = trim((string) $request->input('bloc', ''));
+        $paye = DirectionController::resolvePaye($request);
 
-        $declarations = $direction->buildQuery($statuses, $dateDebut, $dateFin, $intervenant, $recherche, $bloc)
+        $declarations = $direction->buildQuery($statuses, $dateDebut, $dateFin, $intervenant, $recherche, $bloc, $paye)
             ->paginate(25)
             ->withQueryString();
 
         $intervenantOptions = $direction->intervenantOptions();
         $blocOptions = $direction->blocOptions();
 
-        return view('major.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'intervenant', 'recherche', 'bloc', 'intervenantOptions', 'blocOptions'));
+        return view('major.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'intervenant', 'recherche', 'bloc', 'paye', 'intervenantOptions', 'blocOptions'));
     }
 
     /**

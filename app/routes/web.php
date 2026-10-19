@@ -51,6 +51,9 @@ Route::middleware('auth')->group(function (): void {
         Route::patch('/direction/declarations/{declaration}', [DirectionController::class, 'decide'])->name('direction.declarations.decide');
         Route::patch('/direction/declarations/{declaration}/devalider', [DirectionController::class, 'invalidate'])->name('direction.declarations.invalidate');
         Route::patch('/direction/declarations/{declaration}/montant', [DirectionController::class, 'updateMontant'])->name('direction.declarations.montant');
+        // Paiement : Direction ET RH (contrôle de rôle refait dans le contrôleur).
+        Route::patch('/direction/declarations/{declaration}/payer', [DirectionController::class, 'pay'])->name('direction.declarations.pay');
+        Route::patch('/direction/declarations/{declaration}/annuler-paiement', [DirectionController::class, 'unpay'])->name('direction.declarations.unpay');
         Route::get('/direction/declarations/{declaration}/audits', [DirectionController::class, 'audits'])->name('direction.declarations.audits');
         Route::get('/direction/pointages/{matricule}/{date}', [DirectionController::class, 'pointageDetail'])->name('direction.pointages.detail');
     });

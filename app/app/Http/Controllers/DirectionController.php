@@ -24,6 +24,15 @@ class DirectionController extends Controller
         'REJETE' => 'Rejet',
         'DEVALIDE' => 'Dévalidation (correction)',
         'MONTANT_CORRIGE' => 'Correction du montant',
+        'PAYE' => 'Paiement (marquée réglée)',
+        'PAIEMENT_ANNULE' => 'Annulation du paiement',
+    ];
+
+    /** Valeurs du filtre « Payé » (écrans Direction/RH et Pré-validation). */
+    public const PAYE_LABELS = [
+        '' => 'Tous',
+        'oui' => 'Payé',
+        'non' => 'Non payé',
     ];
 
     /** Libellés lisibles des statuts de déclaration (utilisés aussi dans la vue et l'export). */
@@ -56,6 +65,7 @@ class DirectionController extends Controller
         $intervenant = trim((string) $request->input('intervenant', ''));
         $recherche = trim((string) $request->input('recherche', ''));
         $bloc = trim((string) $request->input('bloc', ''));
+        $paye = self::resolvePaye($request);
 
         // CORRECTIF PERF 3/3 (bug 500 en page 2 / grandes périodes) :
         // ->paginate() sur une requête contenant les deux EXISTS de badges
@@ -63,15 +73,28 @@ class DirectionController extends Controller
         // une deuxième fois, juste pour compter le total. paginateDeclarations()
         // sépare : 1) un COUNT rapide sans badges, 2) les 25 lignes de la
         // page, 3) les badges calculés uniquement pour ces 25 lignes.
-        $declarations = $this->paginateDeclarations($statuses, $dateDebut, $dateFin, $intervenant, $recherche, $bloc, (int) $request->input('page', 1))
+        $declarations = $this->paginateDeclarations($statuses, $dateDebut, $dateFin, $intervenant, $recherche, $bloc, (int) $request->input('page', 1), 25, $paye)
             ->withQueryString();
 
         $intervenantOptions = $this->intervenantOptions();
         $blocOptions = $this->blocOptions();
         $prevalidationObligatoire = (bool) config('etrasbloc.prevalidation_obligatoire');
         $stats = $this->statistiques($dateDebut, $dateFin, $intervenant, $recherche, $bloc);
+        // RH et Direction peuvent marquer une déclaration validée comme payée.
+        $canPay = $canValidate || AccessControl::hasRhAccess($username);
 
-        return view('direction.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'intervenant', 'recherche', 'bloc', 'intervenantOptions', 'blocOptions', 'prevalidationObligatoire', 'canValidate', 'stats'));
+        return view('direction.index', compact('declarations', 'statuses', 'dateDebut', 'dateFin', 'intervenant', 'recherche', 'bloc', 'paye', 'intervenantOptions', 'blocOptions', 'prevalidationObligatoire', 'canValidate', 'canPay', 'stats'));
+    }
+
+    /**
+     * Valeur du filtre « Payé » : '' (tous), 'oui' (payé) ou 'non' (non payé).
+     * Public/statique pour être réutilisé par MajorController.
+     */
+    public static function resolvePaye(Request $request): string
+    {
+        $paye = (string) $request->input('paye', '');
+
+        return array_key_exists($paye, self::PAYE_LABELS) ? $paye : '';
     }
 
     /**
@@ -101,7 +124,10 @@ class DirectionController extends Controller
                 SUM(CASE WHEN t.statut = 'PREVALIDE' THEN 1 ELSE 0 END) AS prevalide,
                 SUM(CASE WHEN t.statut = 'VALIDE' THEN 1 ELSE 0 END) AS valide,
                 SUM(CASE WHEN t.statut = 'REJETE' THEN 1 ELSE 0 END) AS refusee,
-                SUM(CASE WHEN t.statut IN ('PREVALIDE', 'VALIDE') AND t.montant IS NOT NULL THEN t.montant ELSE 0 END) AS montantTotal
+                SUM(CASE WHEN t.statut IN ('PREVALIDE', 'VALIDE') AND t.montant IS NOT NULL THEN t.montant ELSE 0 END) AS montantTotal,
+                SUM(CASE WHEN t.statut = 'VALIDE' AND t.paye = 1 THEN 1 ELSE 0 END) AS payee,
+                SUM(CASE WHEN t.statut = 'VALIDE' AND t.paye = 1 AND t.montant IS NOT NULL THEN t.montant ELSE 0 END) AS montantPaye,
+                SUM(CASE WHEN t.statut = 'VALIDE' AND t.paye = 0 AND t.montant IS NOT NULL THEN t.montant ELSE 0 END) AS montantResteAPayer
             ")
             ->first();
 
@@ -112,6 +138,9 @@ class DirectionController extends Controller
             'valide'       => (int) ($row['valide'] ?? 0),
             'refusee'      => (int) ($row['refusee'] ?? 0),
             'montantTotal' => $row['montantTotal'] ?? 0,
+            'payee'        => (int) ($row['payee'] ?? 0),
+            'montantPaye'  => $row['montantPaye'] ?? 0,
+            'montantResteAPayer' => $row['montantResteAPayer'] ?? 0,
         ];
     }
 
@@ -158,8 +187,9 @@ class DirectionController extends Controller
         $intervenant = trim((string) $request->input('intervenant', ''));
         $recherche = trim((string) $request->input('recherche', ''));
         $bloc = trim((string) $request->input('bloc', ''));
+        $paye = self::resolvePaye($request);
 
-        $rows = $this->buildQuery($statuses, $dateDebut, $dateFin, $intervenant, $recherche, $bloc)->get();
+        $rows = $this->buildQuery($statuses, $dateDebut, $dateFin, $intervenant, $recherche, $bloc, $paye)->get();
 
         $filename = 'controle_direction_' . $dateDebut . '_au_' . $dateFin . '.xlsx';
 
@@ -209,7 +239,7 @@ class DirectionController extends Controller
      * À la consultation, les colonnes sélectionnées sont dédupliquées par la
      * colonne "rn" (= 1 pour la ligne conservée).
      */
-    private function declarationsBase(string $dateDebut, string $dateFin, string $intervenant, string $recherche, string $bloc, array $statuses): \Illuminate\Database\Query\Builder
+    private function declarationsBase(string $dateDebut, string $dateFin, string $intervenant, string $recherche, string $bloc, array $statuses, string $paye = ''): \Illuminate\Database\Query\Builder
     {
         // La vue des intervenants peut renvoyer PLUSIEURS lignes pour un
         // même (NumIntv, CodInterv) — par ex. un pointage parasite daté
@@ -237,6 +267,11 @@ class DirectionController extends Controller
                     ->on('i.i_rn', '=', DB::raw('1'));
             })
             ->when($statuses, fn ($q) => $q->whereIn('d.statut', $statuses))
+            // Filtre « Payé » : un paiement n'existe que sur une déclaration
+            // VALIDE. « Payé » = validée ET réglée ; « Non payé » = tout ce
+            // qui n'est pas réglé (combiné avec le filtre de statut).
+            ->when($paye === 'oui', fn ($q) => $q->where('d.statut', 'VALIDE')->where('d.paye', 1))
+            ->when($paye === 'non', fn ($q) => $q->where('d.paye', 0))
             // TRY_CONVERT(datetime2, d.date_acte) est un instantané pris à un moment donné du cycle
             // de vie de la déclaration (constaté : rempli pour les
             // déclarations déjà traitées historiquement, mais PAS alimenté
@@ -316,9 +351,9 @@ class DirectionController extends Controller
      * pour les nouvelles déclarations à ce jour), donc on retombe sur le
      * cache ERP tant que l'acte est dans sa fenêtre.
      */
-    private function declarationsInner(string $dateDebut, string $dateFin, string $intervenant, string $recherche, string $bloc, array $statuses): \Illuminate\Database\Query\Builder
+    private function declarationsInner(string $dateDebut, string $dateFin, string $intervenant, string $recherche, string $bloc, array $statuses, string $paye = ''): \Illuminate\Database\Query\Builder
     {
-        return $this->declarationsBase($dateDebut, $dateFin, $intervenant, $recherche, $bloc, $statuses)
+        return $this->declarationsBase($dateDebut, $dateFin, $intervenant, $recherche, $bloc, $statuses, $paye)
             // Détecte une AUTRE déclaration du même intervenant, le même
             // jour, dont la plage horaire de planification chevauche celle
             // de cette ligne (hors déclarations déjà refusées) — pour
@@ -362,9 +397,9 @@ class DirectionController extends Controller
             ) THEN 1 ELSE 0 END AS doublon_sous_dossier");
     }
 
-    public function buildQuery(array $statuses, string $dateDebut, string $dateFin, string $intervenant = '', string $recherche = '', string $bloc = ''): \Illuminate\Database\Query\Builder
+    public function buildQuery(array $statuses, string $dateDebut, string $dateFin, string $intervenant = '', string $recherche = '', string $bloc = '', string $paye = ''): \Illuminate\Database\Query\Builder
     {
-        $inner = $this->declarationsInner($dateDebut, $dateFin, $intervenant, $recherche, $bloc, $statuses);
+        $inner = $this->declarationsInner($dateDebut, $dateFin, $intervenant, $recherche, $bloc, $statuses, $paye);
 
         // Ne garde qu'une ligne par doublon, puis trie par intervenant et
         // date d'acte (facilite le contrôle d'un même intervenant sur
@@ -391,10 +426,10 @@ class DirectionController extends Controller
      * page 2 / les périodes larges (le total ET la page dépassaient le
      * timeout).
      */
-    private function paginateDeclarations(array $statuses, string $dateDebut, string $dateFin, string $intervenant, string $recherche, string $bloc, int $page, int $perPage = 25): \Illuminate\Pagination\LengthAwarePaginator
+    public function paginateDeclarations(array $statuses, string $dateDebut, string $dateFin, string $intervenant, string $recherche, string $bloc, int $page, int $perPage = 25, string $paye = ''): \Illuminate\Pagination\LengthAwarePaginator
     {
         $page = max(1, $page);
-        $base = $this->declarationsBase($dateDebut, $dateFin, $intervenant, $recherche, $bloc, $statuses);
+        $base = $this->declarationsBase($dateDebut, $dateFin, $intervenant, $recherche, $bloc, $statuses, $paye);
 
         $total = DB::query()->fromSub($base, 't')->where('t.rn', 1)->count();
 
@@ -543,6 +578,7 @@ class DirectionController extends Controller
         DB::transaction(function () use ($declaration, $data, $request): void {
             $item = DB::table('app.extra_declarations')->where('id', $declaration)->lockForUpdate()->first();
             abort_unless($item, 404);
+            abort_if((int) ($item->paye ?? 0) === 1, 422, 'Déclaration déjà payée : annulez d’abord le paiement avant de corriger le montant.');
 
             DB::table('app.extra_declarations')->where('id', $declaration)->update(['montant' => $data['montant']]);
             DB::table('app.extra_declaration_audits')->insert([
@@ -579,6 +615,9 @@ class DirectionController extends Controller
             $item = DB::table('app.extra_declarations')->where('id', $declaration)->lockForUpdate()->first();
             abort_unless($item, 404);
             abort_unless(in_array($item->statut, ['VALIDE', 'REJETE'], true), 422, 'Seule une déclaration validée ou refusée peut être dévalidée.');
+            // Une déclaration réglée ne peut pas repasser « En attente » sans
+            // annuler d'abord le paiement (sinon le suivi des paiements serait faux).
+            abort_if((int) ($item->paye ?? 0) === 1, 422, 'Déclaration déjà payée : annulez d’abord le paiement avant de la dévalider.');
 
             DB::table('app.extra_declarations')->where('id', $declaration)->update([
                 'statut' => 'SOUMIS',
@@ -612,6 +651,85 @@ class DirectionController extends Controller
         }
 
         return back()->with('success', 'Décision annulée : la déclaration repasse en attente et reste tracée dans l’historique.');
+    }
+
+    /**
+     * Marque une déclaration VALIDÉE comme payée (réglée). Action ouverte à
+     * la Direction ET au service RH. Journalisée (action "PAYE").
+     * La concurrence est gérée comme pour les autres actions de cet écran :
+     * transaction + verrou de ligne (lockForUpdate), et refus si la
+     * déclaration a changé d'état entre-temps (déjà payée / plus validée).
+     */
+    public function pay(Request $request, int $declaration): RedirectResponse|JsonResponse
+    {
+        $username = $request->user()->getAuthIdentifier();
+        abort_unless(AccessControl::hasDirectionAccess($username) || AccessControl::hasRhAccess($username), 403, 'Le paiement est réservé à la direction et au service RH.');
+
+        DB::transaction(function () use ($declaration, $username): void {
+            $item = DB::table('app.extra_declarations')->where('id', $declaration)->lockForUpdate()->first();
+            abort_unless($item, 404);
+            abort_unless($item->statut === 'VALIDE', 422, 'Seule une déclaration validée peut être marquée payée.');
+            abort_if((int) $item->paye === 1, 422, 'Cette déclaration est déjà marquée payée.');
+            abort_if($item->montant === null, 422, 'Montant non renseigné : impossible de marquer cette déclaration payée.');
+
+            DB::table('app.extra_declarations')->where('id', $declaration)->update([
+                'paye' => 1,
+                'paye_le' => now(),
+                'paye_par_username' => $username,
+            ]);
+            DB::table('app.extra_declaration_audits')->insert([
+                'declaration_id' => $declaration,
+                'action' => 'PAYE',
+                'acteur_username' => $username,
+                'donnees_avant' => json_encode(['paye' => 0, 'montant' => $item->montant]),
+                'donnees_apres' => json_encode(['paye' => 1, 'montant' => $item->montant]),
+            ]);
+        });
+
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'message' => 'Déclaration marquée payée et journalisée.']);
+        }
+
+        return back()->with('success', 'Déclaration marquée payée et journalisée.');
+    }
+
+    /**
+     * Annule un paiement saisi par erreur (Direction ou RH). Motif
+     * obligatoire, l'ancien paiement reste visible dans la traçabilité.
+     */
+    public function unpay(Request $request, int $declaration): RedirectResponse|JsonResponse
+    {
+        $username = $request->user()->getAuthIdentifier();
+        abort_unless(AccessControl::hasDirectionAccess($username) || AccessControl::hasRhAccess($username), 403, 'L’annulation du paiement est réservée à la direction et au service RH.');
+
+        $data = $request->validate([
+            'motif' => ['required', 'string', 'max:500'],
+        ]);
+
+        DB::transaction(function () use ($declaration, $username, $data): void {
+            $item = DB::table('app.extra_declarations')->where('id', $declaration)->lockForUpdate()->first();
+            abort_unless($item, 404);
+            abort_unless((int) $item->paye === 1, 422, 'Cette déclaration n’est pas marquée payée.');
+
+            DB::table('app.extra_declarations')->where('id', $declaration)->update([
+                'paye' => 0,
+                'paye_le' => null,
+                'paye_par_username' => null,
+            ]);
+            DB::table('app.extra_declaration_audits')->insert([
+                'declaration_id' => $declaration,
+                'action' => 'PAIEMENT_ANNULE',
+                'acteur_username' => $username,
+                'donnees_avant' => json_encode(['paye' => 1, 'paye_le' => $item->paye_le, 'paye_par_username' => $item->paye_par_username, 'montant' => $item->montant]),
+                'donnees_apres' => json_encode(['paye' => 0, 'motif' => $data['motif']]),
+            ]);
+        });
+
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'message' => 'Paiement annulé : la déclaration repasse « Non payé » (tracé dans l’historique).']);
+        }
+
+        return back()->with('success', 'Paiement annulé : la déclaration repasse « Non payé » (tracé dans l’historique).');
     }
 
     /**

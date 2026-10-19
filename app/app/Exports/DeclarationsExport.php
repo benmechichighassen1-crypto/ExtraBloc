@@ -37,6 +37,7 @@ class DeclarationsExport implements FromCollection, ShouldAutoSize, WithHeadings
             'Heure emploi', 'Heure pointage entrée', 'Heure pointage sortie',
             'Saisi par', 'Saisi le', 'Statut',
             'Décidé par', 'Décidé le', 'Motif décision', 'Observation',
+            'Montant', 'Payé', 'Date de paiement', 'Payé par',
         ];
     }
 
@@ -69,6 +70,10 @@ class DeclarationsExport implements FromCollection, ShouldAutoSize, WithHeadings
             Format::dateTime($item->valide_le),
             $item->motif_decision,
             $item->observation,
+            $item->montant !== null ? (int) $item->montant : '',
+            (int) ($item->paye ?? 0) === 1 ? 'Payé' : ($item->statut === 'VALIDE' ? 'Non payé' : ''),
+            Format::dateTime($item->paye_le ?? null),
+            $item->paye_par_username ?? '',
         ];
     }
 

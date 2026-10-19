@@ -15,6 +15,11 @@
                 <label>Du <input type="date" name="date_debut" value="{{ $dateDebut }}"></label>
                 <label>Au <input type="date" name="date_fin" value="{{ $dateFin }}"></label>
                 @foreach($filterableStatuses as $value => $label)<label><input type="checkbox" name="statuts[]" value="{{ $value }}" @checked(in_array($value, $statuses, true))> {{ $label }}</label>@endforeach
+                <label>Paiement
+                    <select name="paye">
+                        @foreach(\App\Http\Controllers\DirectionController::PAYE_LABELS as $value => $label)<option value="{{ $value }}" @selected($paye === $value)>{{ $label }}</option>@endforeach
+                    </select>
+                </label>
                 <button>Filtrer</button>
             </form>
         @endif
@@ -22,7 +27,7 @@
 
     @if($intervs->isNotEmpty())
         <section class="card">
-            <table><thead><tr><th>Date de l’acte</th><th>Acte</th><th>Patient</th><th>Salle</th><th>Rôle</th><th>Statut</th><th>Motif décision</th></tr></thead>
+            <table><thead><tr><th>Date de l’acte</th><th>Acte</th><th>Patient</th><th>Salle</th><th>Rôle</th><th>Statut</th><th>Montant</th><th>Paiement</th><th>Motif décision</th></tr></thead>
             <tbody>
             @forelse($declarations as $item)
                 <tr>
@@ -35,10 +40,12 @@
                         @if($item->statut === 'PREVALIDE')<br><span class="muted">{{ $item->prevalide_par_username }} · {{ \App\Support\Format::dateTime($item->prevalide_le) }}</span>@endif
                         @if($item->statut === 'VALIDE' || $item->statut === 'REJETE')<br><span class="muted">{{ $item->valide_par_username }} · {{ \App\Support\Format::dateTime($item->valide_le) }}</span>@endif
                     </td>
+                    <td>{{ $item->montant ?? '—' }}</td>
+                    <td>@include('partials.paiement-badge', ['item' => $item])</td>
                     <td>{{ $item->motif_decision ?? $item->motif_prevalidation ?? '' }}</td>
                 </tr>
             @empty
-                <tr><td colspan="7">Aucune déclaration sur cette période.</td></tr>
+                <tr><td colspan="9">Aucune déclaration sur cette période.</td></tr>
             @endforelse
             </tbody></table>
             <div style="margin-top:16px">{{ $declarations->links() }}</div>

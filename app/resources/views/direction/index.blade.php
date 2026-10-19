@@ -58,6 +58,15 @@
                 </div>
             @endif
 
+            <div class="filter-field">
+                <label class="filter-label">Paiement</label>
+                <div class="filter-statuses">
+                    @foreach(\App\Http\Controllers\DirectionController::PAYE_LABELS as $value => $label)
+                        <label class="status-toggle"><input type="radio" name="paye" value="{{ $value }}" @checked($paye === $value)> {{ $label }}</label>
+                    @endforeach
+                </div>
+            </div>
+
             <div class="filter-actions">
                 <button>Filtrer</button>
                 <button type="button" onclick="window.print()">Imprimer</button>
@@ -79,6 +88,14 @@
             <div class="num">{{ number_format($stats['montantTotal'], 0, ',', ' ') }}</div>
             <div>Montant total (prévalidées + validées)</div>
         </div>
+        <div class="stat" style="background:#dff5e7;color:#12643e">
+            <div class="num">{{ number_format($stats['montantPaye'], 0, ',', ' ') }}</div>
+            <div>Montant payé ({{ $stats['payee'] }} déclaration(s))</div>
+        </div>
+        <div class="stat" style="background:#fff0c7;color:#805900">
+            <div class="num">{{ number_format($stats['montantResteAPayer'], 0, ',', ' ') }}</div>
+            <div>Reste à payer (validées non payées)</div>
+        </div>
     </section>
 
     <style>
@@ -94,7 +111,7 @@
         .filter-actions { display:flex; flex-wrap:wrap; gap:10px; padding-top:6px; border-top:1px solid #e6edf2 }
         .clear-field-btn { position:absolute; right:2px; top:50%; transform:translateY(-50%); width:22px; height:22px; padding:0; border:0; background:transparent; color:#8a99a6; font-size:16px; line-height:1; cursor:pointer }
     </style>
-    <section class="card"><table><thead><tr><th>Intervenant / acte</th><th>Patient</th><th>Médecins</th><th>Date acte</th><th>Heure planification</th><th>Heure anesthésie</th><th>Heure emploi</th><th>Heure pointage</th><th>Saisie</th><th>Statut</th><th>Montant</th><th>Décision</th></tr></thead><tbody>
+    <section class="card"><table><thead><tr><th>Intervenant / acte</th><th>Patient</th><th>Médecins</th><th>Date acte</th><th>Heure planification</th><th>Heure anesthésie</th><th>Heure emploi</th><th>Heure pointage</th><th>Saisie</th><th>Statut</th><th>Montant</th><th>Paiement</th><th>Décision</th></tr></thead><tbody>
     @forelse($declarations as $item)<tr>
         <td>
             <strong>{{ $item->DesInterv ?? $item->cod_interv }}</strong><br>
@@ -150,7 +167,7 @@
         <td>{{ $item->declared_by_username }}<br><span class="muted">{{ \App\Support\Format::dateTime($item->declared_at) }}</span></td>
         <td><span class="badge status-{{ strtolower($item->statut) }}">{{ $statusLabels[$item->statut] ?? $item->statut }}</span></td>
         <td>
-            @if($canValidate && in_array($item->statut, ['SOUMIS','PREVALIDE','VALIDE'], true))
+            @if($canValidate && in_array($item->statut, ['SOUMIS','PREVALIDE','VALIDE'], true) && (int) $item->paye !== 1)
                 <form method="post" action="{{ route('direction.declarations.montant', $item->id) }}" data-ajax-form onchange="this.requestSubmit()" title="Choisir ou corriger le montant (enregistré automatiquement et journalisé)">
                     @csrf @method('PATCH')
                     <label class="muted" style="display:block;font-size:11px;margin-bottom:3px">Montant</label>
@@ -164,6 +181,23 @@
                     <span class="badge" style="background:#e8f6ec;color:#1c6b36">{{ $item->montant }}</span>
                 @else
                     <span class="muted">—</span>
+                @endif
+            @endif
+        </td>
+        <td>
+            @include('partials.paiement-badge', ['item' => $item])
+            @if($canPay && $item->statut === 'VALIDE')
+                @if((int) $item->paye === 1)
+                    <form method="post" action="{{ route('direction.declarations.unpay', $item->id) }}" class="row" style="margin-top:6px;flex-wrap:nowrap" data-ajax-form onsubmit="return confirm('Annuler le paiement de cette déclaration ?');">
+                        @csrf @method('PATCH')
+                        <input name="motif" placeholder="Motif d’annulation" required style="min-width:110px">
+                        <button type="submit" class="btn-outline">Annuler</button>
+                    </form>
+                @else
+                    <form method="post" action="{{ route('direction.declarations.pay', $item->id) }}" style="margin-top:6px" data-ajax-form onsubmit="return confirm('Marquer cette déclaration comme payée ({{ $item->montant ?? '—' }}) ?');">
+                        @csrf @method('PATCH')
+                        <button type="submit" class="success" @disabled($item->montant === null) title="{{ $item->montant === null ? 'Montant non renseigné' : 'Marquer comme réglée' }}">Payer</button>
+                    </form>
                 @endif
             @endif
         </td>
@@ -188,12 +222,17 @@
                 <div style="text-align:left"><strong>{{ $item->valide_par_username }}</strong><br>
                 <span class="muted">{{ \App\Support\Format::dateTime($item->valide_le) }}</span>
                 @if($item->motif_decision)<br><span class="muted">Motif : {{ $item->motif_decision }}</span>@endif</div>
+                @if((int) $item->paye !== 1)
                 <form method="post" action="{{ route('direction.declarations.invalidate', $item->id) }}" class="row" style="margin-top:8px;justify-content:flex-end;flex-wrap:nowrap" data-ajax-form onsubmit="return confirm('Confirmer l’annulation de cette décision ? La déclaration repassera « En attente ».');">
                     @csrf @method('PATCH')
                     <input name="motif" placeholder="Motif de la correction" required style="min-width:130px">
                     <button type="submit" style="background:#c67c1f">Dévalider</button>
                     <button type="button" class="btn-outline" onclick="openAuditModal({{ $item->id }})">Traçabilité</button>
                 </form>
+                @else
+                    <p class="muted" style="margin:8px 0 0;text-align:left">Payée : annulez le paiement pour pouvoir dévalider.</p>
+                    <button type="button" class="btn-outline" style="margin-top:6px" onclick="openAuditModal({{ $item->id }})">Traçabilité</button>
+                @endif
             @else
                 {{-- RH : lecture seule, aucune action possible --}}
                 <div style="text-align:left"><strong>{{ $item->valide_par_username }}</strong><br>
@@ -202,7 +241,7 @@
                 <button type="button" class="btn-outline" style="margin-top:8px" onclick="openAuditModal({{ $item->id }})">Traçabilité</button>
             @endif
         </td>
-    </tr>@empty <tr><td colspan="12">Aucune déclaration.</td></tr>@endforelse
+    </tr>@empty <tr><td colspan="13">Aucune déclaration.</td></tr>@endforelse
     </tbody></table><div style="margin-top:16px">{{ $declarations->links() }}</div></section>
 
     <div id="pointage-modal-overlay" class="modal-overlay">
